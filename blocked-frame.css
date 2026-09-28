@@ -1,0 +1,52 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI Variable", "Aptos", sans-serif;
+}
+
+body {
+  display: grid;
+  min-height: 100vh;
+  margin: 0;
+  color: #792f29;
+  background: #f9e5e2;
+  place-items: center;
+}
+
+main {
+  padding: 14px;
+  text-align: center;
+  border-left: 3px solid #a13b32;
+}
+
+strong,
+span {
+  display: block;
+}
+
+span {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+button {
+  min-height: 32px;
+  margin-top: 12px;
+  padding: 0 12px;
+  color: white;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  background: #a13b32;
+  border: 1px solid #792f29;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #792f29;
+}
+
+button:focus-visible {
+  outline: 2px solid #792f29;
+  outline-offset: 2px;
+}

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Confirmer le téléchargement</title>
+    <link rel="stylesheet" href="tab-prompt.css" />
+  </head>
+  <body>
+    <main>
+      <div class="prompt-heading">
+        <p class="eyebrow">Ce site souhaite télécharger un fichier</p>
+        <span class="prompt-indicators">
+          <span id="pending-count" class="count-badge" aria-live="polite">1</span>
+        </span>
+      </div>
+      <strong id="hostname">Fichier</strong>
+      <span id="url"></span>
+      <div class="actions">
+        <button id="deny" class="secondary" type="button">Refuser</button>
+        <button id="allow" class="primary" type="button">Télécharger</button>
+      </div>
+    </main>
+    <script src="download-prompt.js"></script>
+  </body>
+</html>

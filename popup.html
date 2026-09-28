@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Origines des ressources</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <p class="eyebrow">Resource Origins</p>
+      </div>
+      <button id="refresh" class="refresh-button" type="button" title="Relancer l’analyse">
+        Actualiser
+      </button>
+    </header>
+
+    <nav class="tabs" role="tablist" aria-label="Sections du popup">
+      <button
+        id="resources-tab"
+        class="tab-button is-active"
+        type="button"
+        role="tab"
+        aria-selected="true"
+        aria-controls="resources-panel"
+      >
+        Ressources
+      </button>
+      <button
+        id="elements-tab"
+        class="tab-button"
+        type="button"
+        role="tab"
+        aria-selected="false"
+        aria-controls="elements-panel"
+        tabindex="-1"
+      >
+        Éléments
+      </button>
+      <button
+        id="settings-tab"
+        class="tab-button"
+        type="button"
+        role="tab"
+        aria-selected="false"
+        aria-controls="settings-panel"
+        tabindex="-1"
+      >
+        Paramètres
+      </button>
+    </nav>
+
+    <main>
+      <section
+        id="resources-panel"
+        class="tab-panel"
+        role="tabpanel"
+        aria-labelledby="resources-tab"
+      >
+        <p id="status" class="status">Analyse de la page…</p>
+
+        <section id="content" hidden>
+          <div class="page-summary">
+            <div class="page-identity">
+              <strong id="page-host"></strong>
+              <span id="page-url"></span>
+            </div>
+            <strong id="resource-total"></strong>
+          </div>
+
+          <div id="type-counts" class="type-counts" aria-label="Totaux par type"></div>
+
+          <label class="search-field">
+            <span>Filtrer les domaines ou fichiers</span>
+            <input id="search" type="search" placeholder="Ex. cdn, analytics, app.js" />
+          </label>
+
+          <p class="blocking-note">
+            Le blocage est global et s’applique au prochain chargement des pages.
+          </p>
+
+          <div id="results" class="results"></div>
+        </section>
+      </section>
+
+      <section
+        id="settings-panel"
+        class="tab-panel settings-panel"
+        role="tabpanel"
+        aria-labelledby="settings-tab"
+        hidden
+      >
+        <h2>Paramètres de navigation</h2>
+
+        <label class="confirmation-timeout-setting">
+          <span>
+            <strong>Fermeture automatique</strong>
+            <small>0 désactive la fermeture automatique</small>
+          </span>
+          <span class="seconds-input">
+            <input
+              id="confirmation-timeout"
+              type="number"
+              min="0"
+              max="300"
+              step="1"
+              value="15"
+            />
+            <span>s</span>
+          </span>
+        </label>
+
+        <label class="iframe-depth-setting">
+          <span>
+            <strong>Profondeur maximale des iframes</strong>
+            <small>La page principale est au niveau 0</small>
+          </span>
+          <select id="max-iframe-depth">
+            <option value="-1">Désactivé</option>
+            <option value="0">0</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+          </select>
+        </label>
+
+        <label class="element-area-setting">
+          <span>
+            <strong>Surface minimale des éléments</strong>
+            <small>Largeur × hauteur, sans effet sur window et document</small>
+          </span>
+          <span class="area-input">
+            <input
+              id="element-min-area"
+              type="number"
+              min="0"
+              max="10000000"
+              step="1000"
+              value="100000"
+            />
+            <span>px²</span>
+          </span>
+        </label>
+
+        <h2>Paramètres pour ce domaine</h2>
+        <p class="blocking-note">
+          S’applique uniquement sur <strong id="domain-name">—</strong>.
+        </p>
+
+        <label class="tab-confirmation-setting">
+          <span>
+            <strong>Confirmer les nouveaux onglets</strong>
+            <small>Pour les liens ouverts depuis une page web</small>
+          </span>
+          <input id="confirm-new-tabs" type="checkbox" role="switch" />
+        </label>
+
+        <label class="tab-confirmation-setting">
+          <span>
+            <strong>Confirmer les téléchargements</strong>
+            <small>Avant l’enregistrement d’un fichier sur le disque</small>
+          </span>
+          <input id="confirm-downloads" type="checkbox" role="switch" />
+        </label>
+
+        <label class="tab-confirmation-setting">
+          <span>
+            <strong>Confirmer les liens vers un autre domaine</strong>
+            <small>Affiche une confirmation avant de suivre un lien externe</small>
+          </span>
+          <input id="confirm-cross-domain" type="checkbox" role="switch" />
+        </label>
+      </section>
+
+      <section
+        id="elements-panel"
+        class="tab-panel elements-panel"
+        role="tabpanel"
+        aria-labelledby="elements-tab"
+        hidden
+      >
+        <div class="elements-heading">
+          <div>
+            <h2>Éléments avec événement</h2>
+            <p>Page, documents, fenêtres et iframes</p>
+          </div>
+          <div class="elements-actions">
+            <button id="remove-trigger-events" class="danger-button" type="button" disabled>
+              Remove dangerous triggers
+            </button>
+            <button id="remove-events" class="danger-button" type="button" disabled>
+              Remove all events
+            </button>
+            <button id="remove-contextmenu" class="danger-button" type="button">
+              Enable context menu
+            </button>
+          </div>
+        </div>
+        <p id="elements-status" class="elements-status">
+          Ouvrez cet onglet pour analyser la page.
+        </p>
+        <div id="elements-results" class="elements-results"></div>
+      </section>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

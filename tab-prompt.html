@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Confirm opening</title>
+    <link rel="stylesheet" href="tab-prompt.css" />
+  </head>
+  <body>
+    <main>
+      <div class="prompt-heading">
+        <p id="eyebrow-text" class="eyebrow">This site wants to open a new tab</p>
+        <span class="prompt-indicators">
+          <span id="timeout-countdown" class="timeout-badge" hidden></span>
+          <span id="pending-count" class="count-badge" aria-live="polite">1</span>
+        </span>
+      </div>
+      <strong id="hostname">Destination</strong>
+      <span id="url"></span>
+      <div class="actions">
+        <button id="deny" class="secondary" type="button">Deny</button>
+        <button id="allow" class="primary" type="button">Allow</button>
+      </div>
+    </main>
+    <script src="tab-prompt.js"></script>
+  </body>
+</html>
