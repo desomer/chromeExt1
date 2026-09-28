@@ -1079,7 +1079,7 @@ async function scanActiveTab() {
       scannedFrameCount === 1 ? "" : "s"
     } analysée${scannedFrameCount === 1 ? "" : "s"}${
       skippedFrameCount
-        ? ` · ${skippedFrameCount} ignorée${skippedFrameCount === 1 ? "" : "s"}`
+        ? ` · ${skippedFrameCount} inaccessible${skippedFrameCount === 1 ? "" : "s"}`
         : ""
     }`;
     status.hidden = frameScan.framesSkipped === 0;
