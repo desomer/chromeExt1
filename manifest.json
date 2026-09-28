@@ -19,10 +19,14 @@
   "background": {
     "service_worker": "background.js"
   },
+  "options_ui": {
+    "page": "domain-settings.html",
+    "open_in_tab": true
+  },
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["intercept-window-open.js"],
+      "js": ["intercept-window-open.js", "disable-dontfoid.js"],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true,
@@ -31,7 +35,7 @@
     },
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["confirm-new-tabs.js", "disable-dontfoid.js"],
+      "js": ["confirm-new-tabs.js"],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true,

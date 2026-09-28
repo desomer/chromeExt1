@@ -1,5 +1,20 @@
 const RESOURCE_TYPES = ["css", "js", "iframe"];
-const BLOCKED_REQUEST_TYPES = ["stylesheet", "script", "sub_frame"];
+const BLOCKED_REQUEST_TYPES = [
+  "sub_frame",
+  "stylesheet",
+  "script",
+  "image",
+  "font",
+  "object",
+  "xmlhttprequest",
+  "ping",
+  "csp_report",
+  "media",
+  "websocket",
+  "webtransport",
+  "webbundle",
+  "other",
+];
 const BLOCK_RULE_PATTERN = /^\|\|(.+)\^$/;
 
 // Small approximation of the public suffix list, only for domains this extension is likely to see.
@@ -94,13 +109,36 @@ function inspectPageResources() {
 function inspectPointerElements(minimumArea = 100000) {
   const eventTypes = [
     "mousedown",
-    "pointerdown",
-    "touchstart",
+    "mouseup",
+    "mousemove",
+    "mouseenter",
+    "mouseleave",
+    "mouseover",
+    "mouseout",
     "click",
+    "dblclick",
+    "auxclick",
     "contextmenu",
+    "wheel",
+    "pointerdown",
+    "pointerup",
+    "pointermove",
+    "pointerenter",
+    "pointerleave",
+    "pointerover",
+    "pointerout",
+    "pointercancel",
+    "gotpointercapture",
+    "lostpointercapture",
+    "touchstart",
+    "touchmove",
+    "touchend",
+    "touchcancel",
   ];
   const registry = window[Symbol.for("resource-origins.listener-registry")];
+  const autoDisabledElements = registry?.autoDisabledElements;
   const candidates = new Set([window, document, ...document.querySelectorAll("*")]);
+  for (const element of autoDisabledElements?.keys() ?? []) candidates.add(element);
   let frameDepth = 0;
   let currentWindow = window;
   while (currentWindow !== currentWindow.top) {
@@ -140,6 +178,7 @@ function inspectPointerElements(minimumArea = 100000) {
     //if (element instanceof Element && element.tagName === "VIDEO") continue;
 
     const registeredTypes = registry?.listenersByTarget.get(element);
+    const widthRemoved = autoDisabledElements?.get(element);
     const targetKind =
       element === window ? "window" : element === document ? "document" : "element";
     const alwaysInclude = targetKind === "document" && frameDepth >= 0;
@@ -154,7 +193,19 @@ function inspectPointerElements(minimumArea = 100000) {
         return false;
       }
     });
-    if (!types.length && !alwaysInclude) continue;
+    const eventOrigins = Object.fromEntries(
+      types.map((type) => [
+        type,
+        [...
+          new Set(
+            (registeredTypes?.get(type) ?? [])
+              .map((registration) => registration.origin)
+              .filter(Boolean)
+          ),
+        ],
+      ])
+    );
+    if (!types.length && !alwaysInclude && !widthRemoved) continue;
 
     const bounds =
       targetKind === "window"
@@ -166,7 +217,7 @@ function inspectPointerElements(minimumArea = 100000) {
             }
           : element.getBoundingClientRect();
     const area = bounds.width * bounds.height;
-    if (targetKind === "element" && area <= minimumArea) continue;
+    if (targetKind === "element" && area <= minimumArea && !widthRemoved) continue;
 
     const targetIndex = matchedElements.length;
     matchedElements.push(element);
@@ -186,9 +237,11 @@ function inspectPointerElements(minimumArea = 100000) {
       selector: targetKind === "element" ? createSelector(element) : targetKind,
       label,
       types,
-      width: Math.round(bounds.width),
-      height: Math.round(bounds.height),
-      area: Math.round(area),
+      eventOrigins,
+      width: widthRemoved?.width ?? Math.round(bounds.width),
+      height: widthRemoved?.height ?? Math.round(bounds.height),
+      area: widthRemoved?.area ?? Math.round(area),
+      widthRemoved: Boolean(widthRemoved),
       frameUrl: location.href,
       frameDepth,
     });
@@ -456,7 +509,35 @@ let elementsScanned = false;
 let activeTabId = null;
 
 async function loadBlockingRules() {
-  const rules = await chrome.declarativeNetRequest.getDynamicRules();
+  let rules = await chrome.declarativeNetRequest.getDynamicRules();
+  const outdatedRules = rules.filter((rule) => {
+    const isOriginBlock =
+      rule.action.type === "block" &&
+      rule.condition.urlFilter?.match(BLOCK_RULE_PATTERN);
+    const resourceTypes = rule.condition.resourceTypes ?? [];
+    return (
+      isOriginBlock &&
+      (resourceTypes.length !== BLOCKED_REQUEST_TYPES.length ||
+        !BLOCKED_REQUEST_TYPES.every((type) => resourceTypes.includes(type)))
+    );
+  });
+
+  if (outdatedRules.length) {
+    const updatedRules = outdatedRules.map((rule) => ({
+      ...rule,
+      condition: {
+        ...rule.condition,
+        resourceTypes: BLOCKED_REQUEST_TYPES,
+      },
+    }));
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: outdatedRules.map((rule) => rule.id),
+      addRules: updatedRules,
+    });
+    const updatedById = new Map(updatedRules.map((rule) => [rule.id, rule]));
+    rules = rules.map((rule) => updatedById.get(rule.id) ?? rule);
+  }
+
   blockingRules = new Map(
     rules.flatMap((rule) => {
       const match = rule.condition.urlFilter?.match(BLOCK_RULE_PATTERN);
@@ -672,6 +753,15 @@ function renderPointerElements(scan) {
     size.textContent = `${element.width} × ${element.height} px · ${element.area} px²`;
     heading.append(tag, size);
 
+    if (element.widthRemoved) {
+      const widthState = document.createElement("span");
+      widthState.className = "element-width-removed";
+      widthState.textContent = "Div overlay neutralisée";
+      row.append(heading, widthState);
+    } else {
+      row.append(heading);
+    }
+
     const frame = document.createElement("span");
     frame.className = "element-frame";
     frame.textContent = element.frameDepth
@@ -691,6 +781,10 @@ function renderPointerElements(scan) {
       if (!element.types.length) {
         badge.className = "no-event";
       } else {
+        const origins = element.eventOrigins?.[type] ?? [];
+        badge.title = origins.length
+          ? origins.join("\n")
+          : "Origine indisponible (gestionnaire inline ou listener non instrumenté).";
         const removeButton = document.createElement("button");
         removeButton.className = "event-remove-button";
         removeButton.type = "button";
@@ -705,7 +799,7 @@ function renderPointerElements(scan) {
       events.append(badge);
     }
 
-    row.append(heading, frame, selector);
+    row.append(frame, selector);
     if (element.label) {
       const label = document.createElement("p");
       label.textContent = element.label;
@@ -738,17 +832,34 @@ async function removeSingleEvent(element, eventType, button) {
   }
 }
 
-async function executeInEveryFrame(tabId, func, args = []) {
+async function executeInEveryFrame(tabId, func, args = [], timeoutMs = 0) {
   const frames = await chrome.webNavigation.getAllFrames({ tabId });
   const executions = await Promise.allSettled(
     frames.map(async (frame) => {
-      const [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId, frameIds: [frame.frameId] },
-        world: "MAIN",
-        func,
-        args,
-      });
-      return { frameId: frame.frameId, parentFrameId: frame.parentFrameId, result };
+      let timeoutId;
+      try {
+        const injection = chrome.scripting.executeScript({
+          target: { tabId, frameIds: [frame.frameId] },
+          world: "MAIN",
+          func,
+          args,
+        });
+        const execution = timeoutMs
+          ? await Promise.race([
+              injection,
+              new Promise((_, reject) => {
+                timeoutId = window.setTimeout(
+                  () => reject(new Error("Frame analysis timed out")),
+                  timeoutMs
+                );
+              }),
+            ])
+          : await injection;
+        const [{ result }] = execution;
+        return { frameId: frame.frameId, parentFrameId: frame.parentFrameId, result };
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
     })
   );
 
@@ -777,7 +888,7 @@ async function scanPointerElements() {
     });
     const execution = await executeInEveryFrame(tab.id, inspectPointerElements, [
       normalizeElementArea(elementMinimumArea),
-    ]);
+    ], 5000);
     const frameResults = execution.results;
     const result = {
       elements: frameResults.flatMap(({ result: frameResult, frameId }) =>
@@ -924,12 +1035,35 @@ async function scanActiveTab() {
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: inspectPageResources,
-    });
+    const frameScan = await executeInEveryFrame(
+      tab.id,
+      inspectPageResources,
+      [],
+      2500
+    );
+    const mainFrame =
+      frameScan.results.find(({ frameId }) => frameId === 0)?.result ??
+      frameScan.results[0]?.result;
+    if (!mainFrame) throw new Error("No accessible frames");
 
-    pageData = result;
+    const resources = { css: [], js: [], iframe: [] };
+    const orderedResources = [];
+    const seenResources = new Set();
+    for (const { result } of frameScan.results) {
+      for (const resource of result.orderedResources) {
+        const resourceKey = `${resource.type}:${resource.url}`;
+        if (seenResources.has(resourceKey)) continue;
+        seenResources.add(resourceKey);
+        resources[resource.type].push(resource.url);
+        orderedResources.push(resource);
+      }
+    }
+
+    pageData = {
+      pageUrl: mainFrame.pageUrl,
+      resources,
+      orderedResources,
+    };
     activeTabId = tab.id;
     const pageUrl = new URL(pageData.pageUrl);
     document.querySelector("#page-host").textContent = pageUrl.hostname;
@@ -939,7 +1073,16 @@ async function scanActiveTab() {
     await loadBlockingRules();
     updateSummary();
     renderResults();
-    status.hidden = true;
+    const scannedFrameCount = frameScan.results.length;
+    const skippedFrameCount = frameScan.framesSkipped;
+    status.textContent = `${scannedFrameCount} frame${
+      scannedFrameCount === 1 ? "" : "s"
+    } analysée${scannedFrameCount === 1 ? "" : "s"}${
+      skippedFrameCount
+        ? ` · ${skippedFrameCount} ignorée${skippedFrameCount === 1 ? "" : "s"}`
+        : ""
+    }`;
+    status.hidden = frameScan.framesSkipped === 0;
     content.hidden = false;
   } catch {
     status.className = "status status-error";
@@ -953,10 +1096,14 @@ document.querySelector("#search").addEventListener("input", (event) => {
 });
 
 const headerAction = document.querySelector("#refresh");
+const domainSettingsAction = document.querySelector("#open-domain-settings");
 headerAction.addEventListener("click", () => {
   const activeTab = document.querySelector('[role="tab"][aria-selected="true"]');
   if (activeTab?.id === "elements-tab") scanPointerElements();
   else scanActiveTab();
+});
+domainSettingsAction.addEventListener("click", () => {
+  chrome.runtime.openOptionsPage();
 });
 
 const confirmNewTabs = document.querySelector("#confirm-new-tabs");
@@ -985,7 +1132,24 @@ confirmDownloads.addEventListener("change", async () => {
 });
 
 const confirmCrossDomain = document.querySelector("#confirm-cross-domain");
+const disableLargeInteractiveDivs = document.querySelector(
+  "#disable-large-interactive-divs"
+);
 let activeRootDomain = null;
+
+disableLargeInteractiveDivs.addEventListener("change", async () => {
+  if (!activeRootDomain) return;
+
+  const { largeInteractiveDivRules } = await chrome.storage.local.get({
+    largeInteractiveDivRules: {},
+  });
+  if (disableLargeInteractiveDivs.checked) {
+    largeInteractiveDivRules[activeRootDomain] = true;
+  } else {
+    delete largeInteractiveDivRules[activeRootDomain];
+  }
+  await chrome.storage.local.set({ largeInteractiveDivRules });
+});
 
 async function loadDomainSettings() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -999,15 +1163,18 @@ async function loadDomainSettings() {
   confirmNewTabs.disabled = !activeRootDomain;
   confirmDownloads.disabled = !activeRootDomain;
   confirmCrossDomain.disabled = !activeRootDomain;
+  disableLargeInteractiveDivs.disabled = !activeRootDomain;
 
   const {
     tabConfirmationRules,
     downloadConfirmationRules,
     crossDomainRules,
+    largeInteractiveDivRules,
   } = await chrome.storage.local.get({
     tabConfirmationRules: {},
     downloadConfirmationRules: {},
     crossDomainRules: {},
+    largeInteractiveDivRules: {},
   });
   confirmNewTabs.checked = Boolean(
     activeRootDomain && tabConfirmationRules[activeRootDomain] !== false
@@ -1017,6 +1184,9 @@ async function loadDomainSettings() {
   );
   confirmCrossDomain.checked = Boolean(
     activeRootDomain && crossDomainRules[activeRootDomain] !== false
+  );
+  disableLargeInteractiveDivs.checked = Boolean(
+    activeRootDomain && largeInteractiveDivRules[activeRootDomain] === true
   );
   updateTimeoutAvailability();
 }
@@ -1098,7 +1268,9 @@ function activateTab(tabButton) {
       !isActive;
   }
 
-  headerAction.hidden = tabButton.id === "settings-tab";
+  const isSettingsTab = tabButton.id === "settings-tab";
+  headerAction.hidden = isSettingsTab;
+  domainSettingsAction.hidden = !isSettingsTab;
   headerAction.textContent =
     tabButton.id === "elements-tab" ? "Analyser" : "Actualiser";
   headerAction.title =

@@ -1,3 +1,4 @@
+(() => {
 const PROMPT_SOURCE = "resource-origins-download-prompt";
 const confirmationQueue = [];
 let currentConfirmation = null;
@@ -22,7 +23,7 @@ async function ensurePrompt() {
       promptHost = document.createElement("div");
       promptHost.id = "DialogResOrigineDownload";
       promptHost.style.cssText =
-        "position:fixed;top:16px;right:16px;z-index:2147483647;display:none;width:370px;height:218px;";
+        "position:fixed;top:16px;right:16px;z-index:2147483647;display:none;width:400px;height:218px;";
 
       const shadowRoot = promptHost.attachShadow({ mode: "closed" });
       const frame = document.createElement("iframe");
@@ -114,3 +115,4 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   sendResponse({ shown: requestConfirmation(message.url, message.filename) });
 });
+})();

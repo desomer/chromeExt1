@@ -11,6 +11,15 @@
       <div>
         <p class="eyebrow">Resource Origins</p>
       </div>
+      <button
+        id="open-domain-settings"
+        class="refresh-button"
+        type="button"
+        title="Afficher les réglages de tous les domaines"
+        hidden
+      >
+        Domaines configurés
+      </button>
       <button id="refresh" class="refresh-button" type="button" title="Relancer l’analyse">
         Actualiser
       </button>
@@ -77,7 +86,7 @@
           </label>
 
           <p class="blocking-note">
-            Le blocage est global et s’applique au prochain chargement des pages.
+            Le blocage est global pour l’origine. Les requêtes déjà chargées ne sont pas annulées.
           </p>
 
           <div id="results" class="results"></div>
@@ -172,6 +181,14 @@
             <small>Affiche une confirmation avant de suivre un lien externe</small>
           </span>
           <input id="confirm-cross-domain" type="checkbox" role="switch" />
+        </label>
+
+        <label class="tab-confirmation-setting">
+          <span>
+            <strong>Neutraliser les grandes divs interactives</strong>
+            <small>Réduit leur largeur à zéro si elles dépassent la surface minimale</small>
+          </span>
+          <input id="disable-large-interactive-divs" type="checkbox" role="switch" />
         </label>
       </section>
 

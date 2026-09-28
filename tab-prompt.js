@@ -67,6 +67,10 @@ window.addEventListener("message", (event) => {
       url.protocol === "about:" ? "New blank tab" : url.hostname;
     document.querySelector("#url").textContent = url.href;
     document.querySelector("#url").title = url.href;
+    document.querySelector("#always-allow-to").disabled = ![
+      "http:",
+      "https:",
+    ].includes(url.protocol);
     document.querySelector("#allow").focus();
   };
   channel.start();
@@ -78,6 +82,14 @@ document.querySelector("#deny").addEventListener("click", () => {
 
 document.querySelector("#allow").addEventListener("click", () => {
   channel?.postMessage({ action: "allow" });
+});
+
+document.querySelector("#always-allow-to").addEventListener("click", () => {
+  channel?.postMessage({ action: "allow-always-to" });
+});
+
+document.querySelector("#always-allow-from").addEventListener("click", () => {
+  channel?.postMessage({ action: "allow-always-from" });
 });
 
 document.addEventListener("keydown", (event) => {

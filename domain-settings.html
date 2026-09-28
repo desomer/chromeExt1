@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Réglages par domaine · Resource Origins</title>
+    <link rel="stylesheet" href="domain-settings.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Resource Origins</p>
+        <h1>Réglages par domaine</h1>
+      </div>
+      <span id="domain-count" class="domain-count">0 domaine</span>
+    </header>
+
+    <main>
+      <label class="search-field">
+        <span>Filtrer les domaines</span>
+        <input id="domain-search" type="search" placeholder="Ex. example.com" />
+      </label>
+
+      <p id="domain-status" class="domain-status" aria-live="polite">
+        Chargement des réglages…
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Domaine</th>
+              <th scope="col">Nouveaux onglets</th>
+              <th scope="col">Téléchargements</th>
+              <th scope="col">Liens externes</th>
+              <th scope="col">Grandes divs</th>
+              <th scope="col">Destination autorisée</th>
+              <th scope="col">Ressources bloquées</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="domain-list"></tbody>
+        </table>
+      </div>
+    </main>
+
+    <script src="domain-settings.js"></script>
+  </body>
+</html>

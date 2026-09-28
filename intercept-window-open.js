@@ -18,12 +18,22 @@
       type.startsWith("mouse") ||
       type.startsWith("pointer") ||
       type.startsWith("touch") ||
-      ["click", "dblclick", "contextmenu", "wheel"].includes(type)
+      ["click", "dblclick", "auxclick", "contextmenu", "wheel"].includes(type)
     );
   }
 
   function isTrackableTarget(target) {
     return target === window || target === document || target instanceof Element;
+  }
+
+  function getListenerOrigin() {
+    const frames = new Error().stack?.split("\n").slice(1) ?? [];
+    const caller = frames.find(
+      (frame) =>
+        !frame.includes("getListenerOrigin") &&
+        !frame.includes("EventTarget.addEventListener")
+    );
+    return caller?.trim() ?? "";
   }
 
   EventTarget.prototype.addEventListener = function (type, listener, options) {
@@ -44,7 +54,7 @@
             registration.listener === listener && registration.capture === capture
         )
       ) {
-        registrations.push({ listener, capture });
+        registrations.push({ listener, capture, origin: getListenerOrigin() });
       }
       listeners.set(normalizedType, registrations);
       listenersByTarget.set(this, listeners);
@@ -80,7 +90,12 @@
 
   Object.defineProperty(window, LISTENER_REGISTRY, {
     configurable: true,
-    value: { trackedTargets, listenersByTarget, contextTarget: null },
+    value: {
+      trackedTargets,
+      listenersByTarget,
+      autoDisabledElements: new Map(),
+      contextTarget: null,
+    },
   });
 
   // Remembers the right-clicked element so the "Éléments" tab can inspect it on demand.

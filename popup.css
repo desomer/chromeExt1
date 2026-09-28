@@ -48,7 +48,7 @@ header {
   padding: 5px 15px 5px;
   color: white;
   background: #163c2b;
-  border-bottom: 3px solid #d8b04b;
+  border-bottom: 3px solid #4bd8a4;
 }
 
 .eyebrow {
@@ -139,7 +139,7 @@ main {
 
 .settings-panel h2,
 .elements-panel h2 {
-  margin: 0 0 18px;
+  margin: 0 0 8px;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 19px;
   font-weight: 600;
@@ -251,7 +251,7 @@ main {
 }
 
 .status {
-  margin: 34px 8px;
+  margin: 0px 0px;
   color: var(--muted);
   text-align: center;
 }
@@ -620,6 +620,14 @@ main {
   color: var(--muted);
   font-size: 10px;
   white-space: nowrap;
+}
+
+.element-width-removed {
+  display: block;
+  margin-top: 4px;
+  color: var(--red);
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .element-tag {

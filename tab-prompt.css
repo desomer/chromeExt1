@@ -14,11 +14,11 @@ body {
 }
 
 main {
-  height: 140px;
+  min-height: 140px;
   padding: 10px;
   color: #17211b;
   background: #ffffff;
-  border-top: 4px solid #d8b04b;
+  border-top: 4px solid #4bd8a4;
   box-shadow: inset 0 0 0 1px #dce2dc;
 }
 
@@ -94,6 +94,7 @@ main {
   margin-top: 20px;
 }
 
+
 button {
   min-height: 34px;
   padding: 0 13px;
@@ -103,6 +104,11 @@ button {
   border: 1px solid #176b45;
   border-radius: 4px;
   cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .primary {

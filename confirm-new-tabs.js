@@ -1,10 +1,17 @@
+(() => {
 let confirmationEnabled = true;
 let confirmationTimeoutSeconds = 15;
 let tabConfirmationRules = {};
 let crossDomainRules = {};
+let allowedTabDestinations = {};
+let largeInteractiveDivRules = {};
+let elementMinimumArea = 100000;
 let crossDomainConfirmationEnabled = false;
 const SETTINGS_EVENT = "resource-origins:confirm-new-tabs-setting";
 const REQUEST_EVENT = "resource-origins:new-tab-requested";
+const ELEMENT_MINIMUM_AREA_EVENT = "resource-origins:element-minimum-area";
+const LARGE_INTERACTIVE_DIV_SETTING_EVENT =
+  "resource-origins:large-interactive-div-setting";
 const PROMPT_SOURCE = "resource-origins-tab-prompt";
 const confirmationQueue = [];
 let currentConfirmation = null;
@@ -12,6 +19,7 @@ let promptHost = null;
 let promptPort = null;
 let promptReady = null;
 let confirmationTimeoutId = null;
+let handlingPromptResponse = false;
 
 // Small approximation of the public suffix list, only for domains this extension is likely to see.
 const MULTI_LABEL_SUFFIXES = new Set([
@@ -26,6 +34,20 @@ function getRootDomain(hostname) {
   const lastTwo = labels.slice(-2).join(".");
   const lastThree = labels.slice(-3).join(".");
   return MULTI_LABEL_SUFFIXES.has(lastTwo) ? lastThree : lastTwo;
+}
+
+function getTopFrameRootDomain() {
+  let hostname = location.hostname;
+  if (window !== window.top) {
+    try {
+      hostname = window.top.location.hostname;
+    } catch {
+      const ancestorOrigins = location.ancestorOrigins;
+      const topOrigin = ancestorOrigins?.[ancestorOrigins.length - 1];
+      if (topOrigin) hostname = new URL(topOrigin).hostname;
+    }
+  }
+  return getRootDomain(hostname);
 }
 
 function removeBlockedFrame(event) {
@@ -96,6 +118,19 @@ function updateTabConfirmationSetting() {
   setConfirmationEnabled(tabConfirmationRules[getRootDomain(location.hostname)] !== false);
 }
 
+function updateLargeInteractiveDivSetting() {
+  window.dispatchEvent(
+    new CustomEvent(ELEMENT_MINIMUM_AREA_EVENT, {
+      detail: elementMinimumArea,
+    })
+  );
+  window.dispatchEvent(
+    new CustomEvent(LARGE_INTERACTIVE_DIV_SETTING_EVENT, {
+      detail: largeInteractiveDivRules[getTopFrameRootDomain()] === true,
+    })
+  );
+}
+
 chrome.storage.local.get({ tabConfirmationRules: {} }).then(({ tabConfirmationRules: rules }) => {
   tabConfirmationRules = rules;
   updateTabConfirmationSetting();
@@ -106,9 +141,23 @@ chrome.storage.local.get({ crossDomainRules: {} }).then(({ crossDomainRules: rul
   updateCrossDomainSetting();
 });
 
+chrome.storage.local
+  .get({ allowedTabDestinations: {} })
+  .then(({ allowedTabDestinations: rules }) => {
+    allowedTabDestinations = rules;
+  });
+
 chrome.storage.local.get({ maxIframeDepth: -1 }).then(({ maxIframeDepth }) => {
   enforceIframeDepth(maxIframeDepth);
 });
+
+chrome.storage.local
+  .get({ elementMinimumArea: 100000, largeInteractiveDivRules: {} })
+  .then((settings) => {
+    elementMinimumArea = settings.elementMinimumArea;
+    largeInteractiveDivRules = settings.largeInteractiveDivRules;
+    updateLargeInteractiveDivSetting();
+  });
 
 chrome.storage.local
   .get({ confirmationTimeoutSeconds: 15 })
@@ -124,9 +173,20 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && changes.maxIframeDepth) {
     enforceIframeDepth(changes.maxIframeDepth.newValue);
   }
+  if (areaName === "local" && changes.elementMinimumArea) {
+    elementMinimumArea = changes.elementMinimumArea.newValue;
+    updateLargeInteractiveDivSetting();
+  }
+  if (areaName === "local" && changes.largeInteractiveDivRules) {
+    largeInteractiveDivRules = changes.largeInteractiveDivRules.newValue || {};
+    updateLargeInteractiveDivSetting();
+  }
   if (areaName === "local" && changes.crossDomainRules) {
     crossDomainRules = changes.crossDomainRules.newValue || {};
     updateCrossDomainSetting();
+  }
+  if (areaName === "local" && changes.allowedTabDestinations) {
+    allowedTabDestinations = changes.allowedTabDestinations.newValue || {};
   }
   if (areaName === "local" && changes.confirmationTimeoutSeconds) {
     confirmationTimeoutSeconds = normalizeTimeout(
@@ -153,7 +213,7 @@ async function ensurePrompt() {
       promptHost = document.createElement("div");
       promptHost.id = "DialogResOrigine";
       promptHost.style.cssText =
-        "position:fixed;top:16px;right:16px;z-index:2147483647;display:none;width:370px;height:218px;";
+        "position:fixed;top:16px;right:16px;z-index:2147483647;display:none;width:400px;height:270px;";
 
       const shadowRoot = promptHost.attachShadow({ mode: "closed" });
       const frame = document.createElement("iframe");
@@ -236,27 +296,71 @@ function updatePendingCount() {
   });
 }
 
-function handlePromptResponse(event) {
-  if (!currentConfirmation || !['allow', 'deny'].includes(event.data?.action)) {
+async function updateDomainRule(storageKey, domain, value) {
+  const stored = await chrome.storage.local.get({ [storageKey]: {} });
+  const rules = stored[storageKey] || {};
+  rules[domain] = value;
+  await chrome.storage.local.set({ [storageKey]: rules });
+  if (storageKey === "allowedTabDestinations") {
+    allowedTabDestinations = rules;
+  } else if (storageKey === "tabConfirmationRules") {
+    tabConfirmationRules = rules;
+    updateTabConfirmationSetting();
+  }
+}
+
+function allowCurrentConfirmation() {
+  if (currentConfirmation.mode === "same-tab") {
+    location.href = currentConfirmation.url;
+  } else {
+    sendMessageBestEffort({
+      action: "open-confirmed-tab",
+      url: currentConfirmation.url,
+      active: currentConfirmation.active,
+    });
+  }
+}
+
+async function handlePromptResponse(event) {
+  const action = event.data?.action;
+  if (
+    !currentConfirmation ||
+    handlingPromptResponse ||
+    !["allow", "deny", "allow-always-to", "allow-always-from"].includes(action)
+  ) {
     return;
   }
 
-  if (event.data.action === "allow") {
-    if (currentConfirmation.mode === "same-tab") {
-      location.href = currentConfirmation.url;
-    } else {
-      sendMessageBestEffort({
-        action: "open-confirmed-tab",
-        url: currentConfirmation.url,
-        active: currentConfirmation.active,
-      });
-    }
-  }
-
+  handlingPromptResponse = true;
   window.clearTimeout(confirmationTimeoutId);
   confirmationTimeoutId = null;
+  const confirmation = currentConfirmation;
+  try {
+    if (action === "allow-always-to") {
+      const destination = new URL(confirmation.url);
+      if (["http:", "https:"].includes(destination.protocol)) {
+        await updateDomainRule(
+          "allowedTabDestinations",
+          getRootDomain(destination.hostname),
+          true
+        );
+      }
+    } else if (action === "allow-always-from") {
+      await updateDomainRule(
+        "tabConfirmationRules",
+        getRootDomain(location.hostname),
+        false
+      );
+    }
+  } catch {
+    // Continue with this confirmation even if the preference could not be saved.
+  }
+
+  if (action !== "deny") allowCurrentConfirmation();
+
   currentConfirmation = null;
   promptHost.style.display = "none";
+  handlingPromptResponse = false;
   showNextConfirmation();
 }
 
@@ -271,6 +375,16 @@ function requestConfirmation(url, active = true, options = {}) {
       url: normalizedUrl,
       active,
     });
+    return true;
+  }
+
+  const destination = new URL(normalizedUrl);
+  if (
+    ["http:", "https:"].includes(destination.protocol) &&
+    allowedTabDestinations[getRootDomain(destination.hostname)] === true
+  ) {
+    if (mode === "same-tab") location.href = normalizedUrl;
+    else sendMessageBestEffort({ action: "open-confirmed-tab", url: normalizedUrl, active });
     return true;
   }
 
@@ -372,3 +486,4 @@ function confirmNewTab(event) {
 
 document.addEventListener("click", confirmNewTab, true);
 document.addEventListener("auxclick", confirmNewTab, true);
+})();
