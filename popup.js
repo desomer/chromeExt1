@@ -879,7 +879,7 @@ async function executeInEveryFrame(tabId, func, args = [], timeoutMs = 0) {
 async function scanPointerElements() {
   const status = document.querySelector("#elements-status");
   status.className = "elements-status";
-  status.textContent = "Analyse des éléments…";
+  status.textContent = "Analyse des éléments… wait iframe";
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -1030,7 +1030,7 @@ async function scanActiveTab() {
   const content = document.querySelector("#content");
   status.hidden = false;
   status.className = "status";
-  status.textContent = "Analyse de la page…";
+  status.textContent = "Analyse de la page… wait iframe";
   content.hidden = true;
 
   try {

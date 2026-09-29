@@ -23,7 +23,7 @@ async function ensurePrompt() {
       promptHost = document.createElement("div");
       promptHost.id = "DialogResOrigineDownload";
       promptHost.style.cssText =
-        "position:fixed;top:16px;right:16px;z-index:2147483647;display:none;width:400px;height:218px;";
+        "position:fixed;top:16px;right:16px;z-index:2147483647;display:none;width:400px;height:218px;color-scheme: light;";
 
       const shadowRoot = promptHost.attachShadow({ mode: "closed" });
       const frame = document.createElement("iframe");

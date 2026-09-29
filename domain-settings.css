@@ -1,16 +1,16 @@
 :root {
-  color-scheme: light;
-  --ink: #17211b;
-  --muted: #68736c;
-  --paper: #f7f8f4;
-  --surface: #ffffff;
-  --line: #dce2dc;
-  --green: #176b45;
-  --green-soft: #dff2e6;
-  --amber: #8b5a10;
-  --amber-soft: #faedce;
-  --red: #a13b32;
-  --red-soft: #f9e5e2;
+  color-scheme: dark;
+  --ink: #e6edf8;
+  --muted: #94a5bd;
+  --paper: #0b1220;
+  --surface: #111c2e;
+  --line: #26364d;
+  --green: #62a8ff;
+  --green-soft: #173456;
+  --amber: #f0bd68;
+  --amber-soft: #3b3020;
+  --red: #ff817c;
+  --red-soft: #40252c;
   font-family: "Segoe UI Variable", "Aptos", sans-serif;
 }
 
@@ -24,8 +24,8 @@ body {
   margin: 0;
   color: var(--ink);
   background:
-    linear-gradient(90deg, rgba(23, 107, 69, 0.035) 1px, transparent 1px),
-    linear-gradient(rgba(23, 107, 69, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(98, 168, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(rgba(98, 168, 255, 0.03) 1px, transparent 1px),
     var(--paper);
   background-size: 24px 24px;
 }
@@ -37,13 +37,13 @@ body {
   justify-content: space-between;
   padding: 18px max(24px, calc((100vw - 1280px) / 2));
   color: white;
-  background: #163c2b;
-  border-bottom: 4px solid #4bd8a4;
+  background: #101d31;
+  border-bottom: 4px solid #62a8ff;
 }
 
 .eyebrow {
   margin: 0 0 4px;
-  color: #b9d7c7;
+  color: #a8cfff;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -51,16 +51,16 @@ body {
 
 h1 {
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: inherit;
   font-size: 28px;
   font-weight: 600;
 }
 
 .domain-count {
   padding: 7px 10px;
-  color: #e8f5ed;
+  color: #e6edf8;
   font-size: 12px;
-  border: 1px solid rgba(232, 245, 237, 0.55);
+  border: 1px solid rgba(230, 237, 248, 0.45);
   border-radius: 4px;
 }
 
@@ -128,7 +128,7 @@ th {
   font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
-  background: #f1f4f0;
+  background: #17243a;
 }
 
 td {
@@ -140,7 +140,7 @@ tbody tr:last-child td {
 }
 
 tbody tr:hover {
-  background: #f8fbf8;
+  background: #15243a;
 }
 
 .domain-cell {

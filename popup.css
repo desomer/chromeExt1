@@ -1,18 +1,19 @@
 :root {
-  color-scheme: light;
-  --ink: #17211b;
-  --muted: #68736c;
-  --paper: #f7f8f4;
-  --surface: #ffffff;
-  --line: #dce2dc;
-  --green: #176b45;
-  --green-soft: #dff2e6;
-  --blue: #1d5f91;
-  --blue-soft: #e0eef8;
-  --amber: #8b5a10;
-  --amber-soft: #faedce;
-  --red: #a13b32;
-  --red-soft: #f9e5e2;
+  color-scheme: dark;
+  --ink: #e6edf8;
+  --muted: #94a5bd;
+  --paper: #0b1220;
+  --surface: #111c2e;
+  --line: #26364d;
+  --green: #62a8ff;
+  --green-soft: #173456;
+  --blue: #72d5ee;
+  --blue-soft: #153845;
+  --amber: #f0bd68;
+  --amber-soft: #3b3020;
+  --red: #ff231b;
+  --red-soft: #40252c;
+  --danger-label: #f98d8d;
   font-family: "Segoe UI Variable", "Aptos", sans-serif;
 }
 
@@ -28,8 +29,8 @@ body {
   margin: 0;
   color: var(--ink);
   background:
-    linear-gradient(90deg, rgba(23, 107, 69, 0.045) 1px, transparent 1px),
-    linear-gradient(rgba(23, 107, 69, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(98, 168, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(rgba(98, 168, 255, 0.035) 1px, transparent 1px),
     var(--paper);
   background-size: 20px 20px;
 }
@@ -47,13 +48,13 @@ header {
   justify-content: space-between;
   padding: 5px 15px 5px;
   color: white;
-  background: #163c2b;
-  border-bottom: 3px solid #4bd8a4;
+  background: #101d31;
+  border-bottom: 3px solid #62a8ff;
 }
 
 .eyebrow {
   margin: 0 0 2px;
-  color: #b9d7c7;
+  color: #a8cfff;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0;
@@ -62,7 +63,7 @@ header {
 
 h1 {
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: inherit;
   font-size: 22px;
   font-weight: 600;
   letter-spacing: 0;
@@ -79,7 +80,7 @@ h1 {
 
 .refresh-button {
   padding: 7px 10px;
-  color: #e8f5ed;
+  color: #e6edf8;
   font-size: 12px;
 }
 
@@ -97,7 +98,7 @@ h1 {
 }
 
 .tab-button {
-  height: 40px;
+  height: 30px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
@@ -140,7 +141,7 @@ main {
 .settings-panel h2,
 .elements-panel h2 {
   margin: 0 0 8px;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: inherit;
   font-size: 19px;
   font-weight: 600;
   letter-spacing: 0;
@@ -197,7 +198,7 @@ main {
   height: 20px;
   margin: 0;
   appearance: none;
-  background: #aeb8b1;
+  background: #394a60;
   border-radius: 10px;
   cursor: pointer;
   transition: background 140ms ease;
@@ -234,7 +235,7 @@ main {
   padding: 0 7px;
   color: var(--ink);
   background: var(--surface);
-  border: 1px solid #bdc8bf;
+  border: 1px solid #354861;
   border-radius: 4px;
 }
 
@@ -258,9 +259,9 @@ main {
 
 .status-error {
   padding: 14px;
-  color: #8c342d;
-  background: #fbe9e7;
-  border: 1px solid #ecc5c1;
+  color: #ffaaa5;
+  background: #351f29;
+  border: 1px solid #68404a;
   border-radius: 6px;
 }
 
@@ -304,6 +305,7 @@ main {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
+  padding-left: 5px;
 }
 
 .type-counts {
@@ -350,14 +352,14 @@ main {
   padding: 0 10px;
   color: var(--ink);
   background: var(--surface);
-  border: 1px solid #bdc8bf;
+  border: 1px solid #354861;
   border-radius: 5px;
   outline: none;
 }
 
 .search-field input:focus {
   border-color: var(--green);
-  box-shadow: 0 0 0 2px rgba(23, 107, 69, 0.14);
+  box-shadow: 0 0 0 2px rgba(98, 168, 255, 0.18);
 }
 
 .blocking-note {
@@ -434,7 +436,7 @@ main {
 }
 
 .block-button {
-  color: var(--red);
+  color: var(--danger-label);
 }
 
 .block-button:hover,
@@ -466,7 +468,7 @@ main {
 
 .resource-path {
   overflow: hidden;
-  color: #465149;
+  color: #b5c4d8;
   font-family: Consolas, monospace;
   font-size: 10px;
   text-overflow: ellipsis;
@@ -496,7 +498,7 @@ main {
   padding: 0 5px 0 8px;
   color: var(--ink);
   background: var(--surface);
-  border: 1px solid #bdc8bf;
+  border: 1px solid #354861;
   border-radius: 4px;
 }
 
@@ -525,7 +527,7 @@ main {
   padding: 0 5px 0 8px;
   color: var(--ink);
   background: var(--surface);
-  border: 1px solid #bdc8bf;
+  border: 1px solid #354861;
   border-radius: 4px;
 }
 
@@ -574,7 +576,7 @@ main {
 }
 
 .danger-button {
-  color: var(--red);
+  color: var(--danger-label);
   border: 1px solid var(--red);
 }
 
@@ -640,7 +642,7 @@ main {
   display: block;
   overflow: hidden;
   margin-top: 5px;
-  color: #465149;
+  color: #b5c4d8;
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -719,5 +721,5 @@ main {
 
 .element-events .no-event {
   color: var(--muted);
-  background: #e9ede9;
+  background: #202d40;
 }
