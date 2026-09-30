@@ -118,6 +118,9 @@
     const opensAnotherContext = !["_self", "_parent", "_top"].includes(
       normalizedTarget
     );
+    const popupRequested = /(?:^|,)\s*(?:popup\s*=\s*(?:yes|true|1)|width\s*=|height\s*=)/i.test(
+      String(features ?? "")
+    );
 
     if (confirmationEnabled && opensAnotherContext) {
       let destination = "about:blank";
@@ -131,7 +134,12 @@
 
       window.dispatchEvent(
         new CustomEvent(REQUEST_EVENT, {
-          detail: { url: destination, active: true },
+          detail: {
+            url: destination,
+            active: true,
+            newWindow: popupRequested,
+            popup: popupRequested,
+          },
         })
       );
       return null;

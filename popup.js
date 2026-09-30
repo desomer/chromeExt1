@@ -106,7 +106,7 @@ function inspectPageResources() {
   };
 }
 
-function inspectPointerElements(minimumArea = 100000) {
+function inspectPointerElements(minimumArea = 100000, minimumZIndex = 1000) {
   const eventTypes = [
     "mousedown",
     "mouseup",
@@ -205,8 +205,6 @@ function inspectPointerElements(minimumArea = 100000) {
         ],
       ])
     );
-    if (!types.length && !alwaysInclude && !widthRemoved) continue;
-
     const bounds =
       targetKind === "window"
         ? { width: window.innerWidth, height: window.innerHeight }
@@ -217,7 +215,20 @@ function inspectPointerElements(minimumArea = 100000) {
             }
           : element.getBoundingClientRect();
     const area = bounds.width * bounds.height;
-    if (targetKind === "element" && area <= minimumArea && !widthRemoved) continue;
+    const zIndex =
+      targetKind === "element"
+        ? Number.parseInt(getComputedStyle(element).zIndex, 10)
+        : null;
+    const hasHighZIndex =
+      Number.isFinite(zIndex) && zIndex > minimumZIndex && area > minimumArea;
+    if (!types.length && !alwaysInclude && !widthRemoved && !hasHighZIndex) continue;
+    if (
+      targetKind === "element" &&
+      area <= minimumArea &&
+      !widthRemoved
+    ) {
+      continue;
+    }
 
     const targetIndex = matchedElements.length;
     matchedElements.push(element);
@@ -241,6 +252,8 @@ function inspectPointerElements(minimumArea = 100000) {
       width: widthRemoved?.width ?? Math.round(bounds.width),
       height: widthRemoved?.height ?? Math.round(bounds.height),
       area: widthRemoved?.area ?? Math.round(area),
+      zIndex: Number.isFinite(zIndex) ? zIndex : null,
+      highZIndex: hasHighZIndex,
       widthRemoved: Boolean(widthRemoved),
       frameUrl: location.href,
       frameDepth,
@@ -462,7 +475,7 @@ function setPointerElementHighlight(targetIndex, enabled) {
       bounds.left < 0 ||
       bounds.bottom > window.innerHeight ||
       bounds.right > window.innerWidth;
-    if (isOutsideViewport && bounds.height < window.innerHeight) {
+    if (isOutsideViewport) {
       target.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
     }
   }
@@ -503,6 +516,133 @@ function setPointerElementHighlight(targetIndex, enabled) {
   };
   updatePosition();
   state.timeoutId = window.setTimeout(() => removeHighlight(state), 3000);
+}
+
+function setIframeElementHighlight(resourceUrl, enabled) {
+  const targetUrl = new URL(resourceUrl, document.baseURI);
+  targetUrl.hash = "";
+  const statesKey = Symbol.for("resource-origins.iframe-highlight-states");
+  const states = (window[statesKey] ??= new Map());
+
+  const restore = (iframe, state) => {
+    clearTimeout(state.timeoutId);
+    cancelAnimationFrame(state.animationFrameId);
+    state.overlay.remove();
+    states.delete(iframe);
+  };
+
+  for (const [iframe, state] of states) {
+    if (state.url === targetUrl.href) restore(iframe, state);
+  }
+  if (!enabled) return;
+
+  for (const iframe of document.querySelectorAll("iframe[src]")) {
+    let iframeUrl;
+    try {
+      iframeUrl = new URL(iframe.src, document.baseURI);
+      iframeUrl.hash = "";
+    } catch {
+      continue;
+    }
+    if (iframeUrl.href !== targetUrl.href) continue;
+
+    const bounds = iframe.getBoundingClientRect();
+    const isOutsideViewport =
+      bounds.top < 0 ||
+      bounds.left < 0 ||
+      bounds.bottom > window.innerHeight ||
+      bounds.right > window.innerWidth;
+    if (isOutsideViewport) {
+      iframe.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    }
+
+    const overlay = document.createElement("div");
+    overlay.setAttribute("aria-hidden", "true");
+    for (const [property, value] of Object.entries({
+      position: "fixed",
+      zIndex: "2147483647",
+      pointerEvents: "none",
+      boxSizing: "border-box",
+      background: "rgba(255, 59, 48, 0.28)",
+      border: "3px solid #ff3b30",
+      borderRadius: "2px",
+      transition: "none",
+    })) {
+      overlay.style.setProperty(
+        property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`),
+        value,
+        "important"
+      );
+    }
+    document.documentElement.append(overlay);
+
+    const state = {
+      url: targetUrl.href,
+      overlay,
+      timeoutId: null,
+      animationFrameId: null,
+    };
+    states.set(iframe, state);
+    const updatePosition = () => {
+      if (!iframe.isConnected) {
+        restore(iframe, state);
+        return;
+      }
+      const bounds = iframe.getBoundingClientRect();
+      overlay.style.setProperty("left", `${bounds.left - 20}px`, "important");
+      overlay.style.setProperty("top", `${bounds.top - 20}px`, "important");
+      overlay.style.setProperty("width", `${bounds.width + 40}px`, "important");
+      overlay.style.setProperty("height", `${bounds.height + 40}px`, "important");
+      state.animationFrameId = requestAnimationFrame(updatePosition);
+    };
+    updatePosition();
+    state.timeoutId = window.setTimeout(() => {
+      if (states.get(iframe) === state) restore(iframe, state);
+    }, 3000);
+  }
+}
+
+function scrollIframeIntoView(childUrl) {
+  let targetUrl;
+  try {
+    targetUrl = new URL(childUrl, document.baseURI);
+    targetUrl.hash = "";
+  } catch {
+    return false;
+  }
+
+  const candidates = [...document.querySelectorAll("iframe")].map((iframe) => {
+    try {
+      const iframeUrl = new URL(iframe.getAttribute("src") || iframe.src, document.baseURI);
+      iframeUrl.hash = "";
+      return { iframe, url: iframeUrl };
+    } catch {
+      return null;
+    }
+  }).filter(Boolean);
+  const exactMatch = candidates.find(({ url }) => url.href === targetUrl.href);
+  const sameOriginMatches = candidates.filter(
+    ({ url }) => url.origin === targetUrl.origin
+  );
+  const candidate =
+    exactMatch ??
+    (sameOriginMatches.length === 1
+      ? sameOriginMatches[0]
+      : candidates.length === 1
+        ? candidates[0]
+        : null);
+  if (!candidate) return false;
+
+  const bounds = candidate.iframe.getBoundingClientRect();
+  const isOutsideViewport =
+    bounds.top < 0 ||
+    bounds.left < 0 ||
+    bounds.bottom > window.innerHeight ||
+    bounds.right > window.innerWidth;
+  if (isOutsideViewport) {
+    candidate.iframe.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+  }
+  return true;
 }
 
 function removeContextMenuEventsFromAllTargets() {
@@ -733,7 +873,18 @@ function renderResults(query = "") {
     const badges = document.createElement("span");
     badges.className = "badges";
     for (const type of RESOURCE_TYPES) {
-      if (group[type].length) badges.append(createTypeBadge(type, group[type].length));
+      if (!group[type].length) continue;
+      const badge = createTypeBadge(type, group[type].length);
+      if (type === "iframe") {
+        const firstIframe = group.resources.find((resource) => resource.type === "iframe");
+        if (firstIframe) {
+          badge.classList.add("badge-iframe-highlight");
+          badge.title = "Survoler pour mettre en évidence la première iframe de ce domaine";
+          badge.addEventListener("mouseenter", () => highlightIframeResource(firstIframe, true));
+          badge.addEventListener("mouseleave", () => highlightIframeResource(firstIframe, false));
+        }
+      }
+      badges.append(badge);
     }
     const reputationBadges = document.createElement("span");
     reputationBadges.className = "origin-reputation";
@@ -790,11 +941,29 @@ function renderResults(query = "") {
       path.textContent = `${parsedUrl.pathname}${parsedUrl.search}`;
       path.title = resource.url;
       row.append(path);
+      if (resource.type === "iframe") {
+        row.classList.add("resource-row-iframe");
+        row.addEventListener("mouseenter", () => highlightIframeResource(resource, true));
+        row.addEventListener("mouseleave", () => highlightIframeResource(resource, false));
+      }
       resourceList.append(row);
     }
 
     details.append(summary, resourceList);
     results.append(details);
+  }
+}
+
+function highlightIframeResource(resource, enabled) {
+  if (activeTabId == null) return;
+
+  for (const frameId of resource.frameIds ?? []) {
+    chrome.scripting.executeScript({
+      target: { tabId: activeTabId, frameIds: [frameId] },
+      world: "MAIN",
+      func: setIframeElementHighlight,
+      args: [resource.url, enabled],
+    }).catch(() => {});
   }
 }
 
@@ -1145,9 +1314,16 @@ function renderPointerElements(scan) {
   const results = document.querySelector("#elements-results");
   const status = document.querySelector("#elements-status");
   results.replaceChildren();
-  const removalDisabled = !scan.instrumentationActive || !scan.elements.length;
-  document.querySelector("#remove-events").disabled = removalDisabled;
-  document.querySelector("#remove-trigger-events").disabled = removalDisabled;
+  const hasEvents = scan.elements.some((element) => element.types.length > 0);
+  const hasTriggerEvents = scan.elements.some((element) =>
+    element.types.some((type) =>
+      ["mousedown", "pointerdown", "contextmenu", "touchstart"].includes(type)
+    )
+  );
+  document.querySelector("#remove-events").disabled =
+    !scan.instrumentationActive || !hasEvents;
+  document.querySelector("#remove-trigger-events").disabled =
+    !scan.instrumentationActive || !hasTriggerEvents;
 
   if (!scan.instrumentationActive) {
     status.className = "elements-status elements-warning";
@@ -1198,6 +1374,14 @@ function renderPointerElements(scan) {
       widthState.className = "element-width-removed";
       widthState.textContent = "Div overlay neutralisée";
       row.append(widthState);
+    }
+
+    if (element.highZIndex) {
+      const zIndexState = document.createElement("span");
+      zIndexState.className = "element-z-index";
+      zIndexState.textContent = `z-index ${element.zIndex}`;
+      zIndexState.title = "Valeur supérieure au seuil global configuré.";
+      row.append(zIndexState);
     }
 
     const frame = document.createElement("span");
@@ -1251,12 +1435,27 @@ function renderPointerElements(scan) {
 function highlightPointerElement(element, enabled) {
   if (activeTabId == null) return;
 
-  chrome.scripting.executeScript({
+  const highlightPromise = chrome.scripting.executeScript({
     target: { tabId: activeTabId, frameIds: [element.frameId] },
     world: "MAIN",
     func: setPointerElementHighlight,
     args: [element.targetIndex, enabled],
   }).catch(() => {});
+  if (!enabled) return;
+
+  (async () => {
+    await highlightPromise;
+    for (const ancestor of [...(element.ancestorFrames ?? [])].reverse()) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: activeTabId, frameIds: [ancestor.frameId] },
+          world: "MAIN",
+          func: scrollIframeIntoView,
+          args: [ancestor.childUrl],
+        });
+      } catch {}
+    }
+  })().catch(() => {});
 }
 
 async function removeSingleEvent(element, eventType, button) {
@@ -1305,7 +1504,12 @@ async function executeInEveryFrame(tabId, func, args = [], timeoutMs = 0) {
             ])
           : await injection;
         const [{ result }] = execution;
-        return { frameId: frame.frameId, parentFrameId: frame.parentFrameId, result };
+        return {
+          frameId: frame.frameId,
+          parentFrameId: frame.parentFrameId,
+          url: frame.url,
+          result,
+        };
       } finally {
         window.clearTimeout(timeoutId);
       }
@@ -1319,6 +1523,11 @@ async function executeInEveryFrame(tabId, func, args = [], timeoutMs = 0) {
         : []
     ),
     framesFound: frames.length,
+    frameTree: frames.map(({ frameId, parentFrameId, url }) => ({
+      frameId,
+      parentFrameId,
+      url,
+    })),
     framesSkipped: executions.filter(
       (execution) => execution.status === "rejected" || !execution.value.result
     ).length,
@@ -1333,16 +1542,36 @@ async function scanPointerElements() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     activeTabId = tab.id;
-    const { elementMinimumArea } = await chrome.storage.local.get({
+    const { elementMinimumArea, elementMinimumZIndex } = await chrome.storage.local.get({
       elementMinimumArea: 100000,
+      elementMinimumZIndex: 1000,
     });
     const execution = await executeInEveryFrame(tab.id, inspectPointerElements, [
       normalizeElementArea(elementMinimumArea),
+      normalizeElementZIndex(elementMinimumZIndex),
     ], 5000);
     const frameResults = execution.results;
+    const framesById = new Map(
+      execution.frameTree.map((frame) => [frame.frameId, frame])
+    );
+    const getAncestorFrames = (frameId) => {
+      const ancestors = [];
+      let childFrame = framesById.get(frameId);
+      while (childFrame && childFrame.parentFrameId >= 0) {
+        const parentFrame = framesById.get(childFrame.parentFrameId);
+        if (!parentFrame) break;
+        ancestors.push({ frameId: parentFrame.frameId, childUrl: childFrame.url });
+        childFrame = parentFrame;
+      }
+      return ancestors;
+    };
     const result = {
       elements: frameResults.flatMap(({ result: frameResult, frameId }) =>
-        frameResult.elements.map((element) => ({ ...element, frameId }))
+        frameResult.elements.map((element) => ({
+          ...element,
+          frameId,
+          ancestorFrames: getAncestorFrames(frameId),
+        }))
       ),
       instrumentationActive: frameResults.every(
         ({ result: frameResult }) => frameResult.instrumentationActive
@@ -1498,14 +1727,19 @@ async function scanActiveTab() {
 
     const resources = { css: [], js: [], iframe: [] };
     const orderedResources = [];
-    const seenResources = new Set();
-    for (const { result } of frameScan.results) {
+    const resourceIndexes = new Map();
+    for (const { result, frameId } of frameScan.results) {
       for (const resource of result.orderedResources) {
         const resourceKey = `${resource.type}:${resource.url}`;
-        if (seenResources.has(resourceKey)) continue;
-        seenResources.add(resourceKey);
+        const existingIndex = resourceIndexes.get(resourceKey);
+        if (existingIndex !== undefined) {
+          const frameIds = orderedResources[existingIndex].frameIds;
+          if (!frameIds.includes(frameId)) frameIds.push(frameId);
+          continue;
+        }
+        resourceIndexes.set(resourceKey, orderedResources.length);
         resources[resource.type].push(resource.url);
-        orderedResources.push(resource);
+        orderedResources.push({ ...resource, frameIds: [frameId] });
       }
     }
 
@@ -1707,6 +1941,26 @@ elementMinArea.addEventListener("change", () => {
   elementMinArea.value = String(area);
   elementsScanned = false;
   chrome.storage.local.set({ elementMinimumArea: area });
+});
+
+const elementMinZIndex = document.querySelector("#element-min-z-index");
+
+function normalizeElementZIndex(value) {
+  const threshold = Number(value);
+  if (!Number.isFinite(threshold)) return 1000;
+  return Math.min(2147483647, Math.max(-2147483648, Math.round(threshold)));
+}
+
+chrome.storage.local
+  .get({ elementMinimumZIndex: 1000 })
+  .then(({ elementMinimumZIndex }) => {
+    elementMinZIndex.value = String(normalizeElementZIndex(elementMinimumZIndex));
+  });
+elementMinZIndex.addEventListener("change", () => {
+  const threshold = normalizeElementZIndex(elementMinZIndex.value);
+  elementMinZIndex.value = String(threshold);
+  elementsScanned = false;
+  chrome.storage.local.set({ elementMinimumZIndex: threshold });
 });
 
 const safeBrowsingApiKey = document.querySelector("#safe-browsing-api-key");

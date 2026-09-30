@@ -317,6 +317,8 @@ function allowCurrentConfirmation() {
       action: "open-confirmed-tab",
       url: currentConfirmation.url,
       active: currentConfirmation.active,
+      newWindow: currentConfirmation.newWindow,
+      popup: currentConfirmation.popup,
     });
   }
 }
@@ -374,6 +376,8 @@ function requestConfirmation(url, active = true, options = {}) {
       action: "show-confirmation-in-top",
       url: normalizedUrl,
       active,
+      newWindow: options.newWindow === true,
+      popup: options.popup === true,
     });
     return true;
   }
@@ -384,11 +388,26 @@ function requestConfirmation(url, active = true, options = {}) {
     allowedTabDestinations[getRootDomain(destination.hostname)] === true
   ) {
     if (mode === "same-tab") location.href = normalizedUrl;
-    else sendMessageBestEffort({ action: "open-confirmed-tab", url: normalizedUrl, active });
+    else {
+      sendMessageBestEffort({
+        action: "open-confirmed-tab",
+        url: normalizedUrl,
+        active,
+        newWindow: options.newWindow === true,
+        popup: options.popup === true,
+      });
+    }
     return true;
   }
 
-  confirmationQueue.push({ url: normalizedUrl, active, mode, message: options.message });
+  confirmationQueue.push({
+    url: normalizedUrl,
+    active,
+    mode,
+    message: options.message,
+    newWindow: options.newWindow === true,
+    popup: options.popup === true,
+  });
   if (currentConfirmation) {
     updatePendingCount();
   } else {
@@ -399,14 +418,28 @@ function requestConfirmation(url, active = true, options = {}) {
 
 window.addEventListener(REQUEST_EVENT, (event) => {
   if (event.detail && typeof event.detail === "object") {
-    requestConfirmation(event.detail.url, event.detail.active);
+    requestConfirmation(event.detail.url, event.detail.active, {
+      newWindow: event.detail.newWindow === true,
+      popup: event.detail.popup === true,
+      message: event.detail.newWindow
+        ? "This site wants to open a new window"
+        : undefined,
+    });
   }
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.action !== "show-tab-confirmation") return;
 
-  sendResponse({ shown: requestConfirmation(message.url, message.active) });
+  sendResponse({
+    shown: requestConfirmation(message.url, message.active, {
+      newWindow: message.newWindow === true,
+      popup: message.popup === true,
+      message: message.newWindow
+        ? "This site wants to open a new window"
+        : undefined,
+    }),
+  });
 });
 
 function getLinkFromEvent(event) {
@@ -457,15 +490,19 @@ function confirmNewTab(event) {
     event.ctrlKey ||
     event.metaKey ||
     event.button === 1;
+  const opensNewWindow = event.shiftKey;
 
-  if (opensNewTab) {
+  if (opensNewTab || opensNewWindow) {
     if (!confirmationEnabled) return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
     requestConfirmation(
       destination.href,
-      !(event.ctrlKey || event.metaKey || event.button === 1)
+      !(event.ctrlKey || event.metaKey || event.button === 1),
+      opensNewWindow
+        ? { newWindow: true, message: "This link wants to open a new window" }
+        : {}
     );
     return;
   }

@@ -316,6 +316,8 @@ chrome.runtime.onMessage.addListener((message, sender) => {
           action: "show-tab-confirmation",
           url: message.url,
           active: message.active,
+          newWindow: message.newWindow,
+          popup: message.popup,
         },
         { frameId: 0 }
       )
@@ -326,6 +328,17 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.action === "open-confirmed-tab" && sender.tab?.id) {
     const targetUrl = message.url === "about:blank" ? message.url : isWebUrl(message.url) && message.url;
     if (!targetUrl) return;
+
+    if (message.newWindow === true) {
+      runBestEffort(() =>
+        chrome.windows.create({
+          url: targetUrl,
+          type: message.popup === true ? "popup" : "normal",
+          focused: message.active !== false,
+        })
+      );
+      return;
+    }
 
     approvedOpenings.push({
       openerTabId: sender.tab.id,

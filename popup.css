@@ -345,6 +345,10 @@ main {
   background: var(--amber-soft);
 }
 
+.badge-iframe-highlight {
+  cursor: crosshair;
+}
+
 .search-field span {
   display: block;
   margin-bottom: 5px;
@@ -564,6 +568,14 @@ main {
   min-height: 28px;
 }
 
+.resource-row-iframe {
+  cursor: crosshair;
+}
+
+.resource-row-iframe:hover .resource-path {
+  color: #ffaaa5;
+}
+
 .resource-row .badge {
   justify-content: center;
 }
@@ -743,6 +755,17 @@ main {
   font-size: 10px;
   font-weight: 700;
   background: var(--red-soft);
+  border-radius: 3px;
+}
+
+.element-z-index {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 5px;
+  color: var(--amber);
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--amber-soft);
   border-radius: 3px;
 }
 
