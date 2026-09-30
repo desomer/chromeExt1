@@ -15,10 +15,10 @@ const LARGE_INTERACTIVE_DIV_SETTING_EVENT =
 const PROMPT_SOURCE = "resource-origins-tab-prompt";
 const confirmationQueue = [];
 let currentConfirmation = null;
+let trustedClickSourceSelector = "";
 let promptHost = null;
 let promptPort = null;
 let promptReady = null;
-let confirmationTimeoutId = null;
 let handlingPromptResponse = false;
 
 // Small approximation of the public suffix list, only for domains this extension is likely to see.
@@ -256,34 +256,50 @@ async function showNextConfirmation() {
 
   currentConfirmation = confirmationQueue.shift();
   promptHost.style.display = "block";
-  const expiresAt = startConfirmationTimeout();
   promptPort.postMessage({
     action: "show",
     url: currentConfirmation.url,
     pendingCount: confirmationQueue.length + 1,
-    expiresAt,
+    expiresAt: currentConfirmation.expiresAt,
     message: currentConfirmation.message,
+    removeTriggerOnDeny: Boolean(currentConfirmation.sourceSelector),
   });
 }
 
-function startConfirmationTimeout() {
-  window.clearTimeout(confirmationTimeoutId);
-  confirmationTimeoutId = null;
-  if (!currentConfirmation || confirmationTimeoutSeconds === 0) return null;
+function scheduleConfirmationTimeout(confirmation) {
+  window.clearTimeout(confirmation.timeoutId);
+  confirmation.timeoutId = null;
+  confirmation.expiresAt = confirmationTimeoutSeconds
+    ? confirmation.enqueuedAt + confirmationTimeoutSeconds * 1000
+    : null;
+  if (confirmation.expiresAt === null) return;
 
-  const expiresAt = Date.now() + confirmationTimeoutSeconds * 1000;
-  confirmationTimeoutId = window.setTimeout(() => {
-    handlePromptResponse({ data: { action: "deny" } });
-  }, confirmationTimeoutSeconds * 1000);
-  return expiresAt;
+  confirmation.timeoutId = window.setTimeout(() => {
+    confirmation.timeoutId = null;
+    if (currentConfirmation === confirmation) {
+      handlePromptResponse({ data: { action: "deny" } });
+      return;
+    }
+
+    const queueIndex = confirmationQueue.indexOf(confirmation);
+    if (queueIndex !== -1) {
+      confirmationQueue.splice(queueIndex, 1);
+      updatePendingCount();
+      if (!currentConfirmation) showNextConfirmation();
+    }
+  }, Math.max(0, confirmation.expiresAt - Date.now()));
 }
 
 function updateConfirmationTimeout() {
-  if (!currentConfirmation || !promptPort) return;
+  for (const confirmation of confirmationQueue) {
+    scheduleConfirmationTimeout(confirmation);
+  }
+  if (!currentConfirmation) return;
 
-  promptPort.postMessage({
+  scheduleConfirmationTimeout(currentConfirmation);
+  promptPort?.postMessage({
     action: "update-timeout",
-    expiresAt: startConfirmationTimeout(),
+    expiresAt: currentConfirmation.expiresAt,
   });
 }
 
@@ -334,9 +350,9 @@ async function handlePromptResponse(event) {
   }
 
   handlingPromptResponse = true;
-  window.clearTimeout(confirmationTimeoutId);
-  confirmationTimeoutId = null;
   const confirmation = currentConfirmation;
+  window.clearTimeout(confirmation.timeoutId);
+  confirmation.timeoutId = null;
   try {
     if (action === "allow-always-to") {
       const destination = new URL(confirmation.url);
@@ -358,7 +374,17 @@ async function handlePromptResponse(event) {
     // Continue with this confirmation even if the preference could not be saved.
   }
 
-  if (action !== "deny") allowCurrentConfirmation();
+  if (action === "deny" && event.data.removeTrigger === true) {
+    if (confirmation.sourceSelector) {
+      sendMessageBestEffort({
+        action: "remove-denied-click-handlers",
+        selector: confirmation.sourceSelector,
+        frameId: confirmation.sourceFrameId,
+      });
+    }
+  } else if (action !== "deny") {
+    allowCurrentConfirmation();
+  }
 
   currentConfirmation = null;
   promptHost.style.display = "none";
@@ -378,6 +404,7 @@ function requestConfirmation(url, active = true, options = {}) {
       active,
       newWindow: options.newWindow === true,
       popup: options.popup === true,
+      sourceSelector: options.sourceSelector || "",
     });
     return true;
   }
@@ -395,19 +422,28 @@ function requestConfirmation(url, active = true, options = {}) {
         active,
         newWindow: options.newWindow === true,
         popup: options.popup === true,
+        sourceSelector: options.sourceSelector || "",
+        sourceFrameId: options.sourceFrameId ?? 0,
       });
     }
     return true;
   }
 
-  confirmationQueue.push({
+  const confirmation = {
     url: normalizedUrl,
     active,
     mode,
     message: options.message,
     newWindow: options.newWindow === true,
     popup: options.popup === true,
-  });
+    sourceSelector: options.sourceSelector || "",
+    sourceFrameId: options.sourceFrameId ?? 0,
+    enqueuedAt: Date.now(),
+    expiresAt: null,
+    timeoutId: null,
+  };
+  confirmationQueue.push(confirmation);
+  scheduleConfirmationTimeout(confirmation);
   if (currentConfirmation) {
     updatePendingCount();
   } else {
@@ -421,6 +457,7 @@ window.addEventListener(REQUEST_EVENT, (event) => {
     requestConfirmation(event.detail.url, event.detail.active, {
       newWindow: event.detail.newWindow === true,
       popup: event.detail.popup === true,
+      sourceSelector: trustedClickSourceSelector,
       message: event.detail.newWindow
         ? "This site wants to open a new window"
         : undefined,
@@ -435,6 +472,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     shown: requestConfirmation(message.url, message.active, {
       newWindow: message.newWindow === true,
       popup: message.popup === true,
+      sourceSelector: message.sourceSelector || "",
+      sourceFrameId: message.sourceFrameId,
       message: message.newWindow
         ? "This site wants to open a new window"
         : undefined,
@@ -462,6 +501,36 @@ function getLinkHref(link) {
 function getLinkTarget(link) {
   const target = link instanceof SVGAElement ? link.target.baseVal : link.target;
   return (target || "").toLowerCase();
+}
+
+function getElementSelector(element) {
+  if (!(element instanceof Element)) return "";
+  if (element.id) return `#${CSS.escape(element.id)}`;
+
+  const parts = [];
+  let current = element;
+  while (current instanceof Element && current !== document.documentElement) {
+    let part = current.tagName.toLowerCase();
+    const parent = current.parentElement;
+    if (parent) {
+      const siblings = [...parent.children].filter(
+        (sibling) => sibling.tagName === current.tagName
+      );
+      if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+    }
+    parts.unshift(part);
+    current = parent;
+  }
+  return parts.join(" > ");
+}
+
+function rememberTrustedClickSource(event) {
+  if (!event.isTrusted) return;
+  const source = event.composedPath().find((item) => item instanceof Element);
+  trustedClickSourceSelector = getElementSelector(source);
+  window.setTimeout(() => {
+    trustedClickSourceSelector = "";
+  }, 0);
 }
 
 function confirmNewTab(event) {
@@ -500,9 +569,12 @@ function confirmNewTab(event) {
     requestConfirmation(
       destination.href,
       !(event.ctrlKey || event.metaKey || event.button === 1),
-      opensNewWindow
-        ? { newWindow: true, message: "This link wants to open a new window" }
-        : {}
+      {
+        sourceSelector: event.isTrusted ? getElementSelector(link) : "",
+        ...(opensNewWindow
+          ? { newWindow: true, message: "This link wants to open a new window" }
+          : {}),
+      }
     );
     return;
   }
@@ -521,6 +593,8 @@ function confirmNewTab(event) {
   }
 }
 
+document.addEventListener("click", rememberTrustedClickSource, true);
+document.addEventListener("auxclick", rememberTrustedClickSource, true);
 document.addEventListener("click", confirmNewTab, true);
 document.addEventListener("auxclick", confirmNewTab, true);
 })();

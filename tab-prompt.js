@@ -71,13 +71,18 @@ window.addEventListener("message", (event) => {
       "http:",
       "https:",
     ].includes(url.protocol);
+    const denyButton = document.querySelector("#deny");
+    denyButton.textContent = data.removeTriggerOnDeny ? "Deny & disable" : "Deny";
+    denyButton.title = data.removeTriggerOnDeny
+      ? "Deny and remove click handlers from the source element"
+      : "Deny this request";
     document.querySelector("#allow").focus();
   };
   channel.start();
 });
 
 document.querySelector("#deny").addEventListener("click", () => {
-  channel?.postMessage({ action: "deny" });
+  channel?.postMessage({ action: "deny", removeTrigger: true });
 });
 
 document.querySelector("#allow").addEventListener("click", () => {

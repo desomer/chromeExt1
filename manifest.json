@@ -13,6 +13,7 @@
     "downloads",
     "storage",
     "tabs",
+    "windows",
     "webNavigation"
   ],
   "host_permissions": ["http://*/*", "https://*/*"],

@@ -4,7 +4,7 @@ Extension Chrome Manifest V3 qui analyse l'onglet actif et regroupe par origine 
 
 Le popup comporte trois onglets : **Ressources** pour l'analyse et le blocage par domaine, **Éléments** pour inspecter les zones interactives de la page, et **Paramètres** pour la confirmation des nouveaux onglets et la profondeur maximale des iframes.
 
-Les domaines sont affichés selon l'arrivée de leur première requête réseau. Dans chaque domaine, les ressources suivent également leur ordre de téléchargement. Les ressources sans mesure de performance disponible sont placées à la fin.
+Les domaines sont affichés selon l'arrivée de leur première requête réseau. Dans chaque domaine, les ressources suivent également leur ordre de téléchargement. Chaque ressource indique aussi le ou les domaines des frames qui l'ont demandée. Les ressources sans mesure de performance disponible sont placées à la fin.
 
 ## Éléments interactifs
 

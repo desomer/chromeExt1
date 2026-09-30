@@ -137,8 +137,10 @@ function inspectPointerElements(minimumArea = 100000, minimumZIndex = 1000) {
   ];
   const registry = window[Symbol.for("resource-origins.listener-registry")];
   const autoDisabledElements = registry?.autoDisabledElements;
+  const manuallyHiddenElements = registry?.manualDisplayNoneElements;
   const candidates = new Set([window, document, ...document.querySelectorAll("*")]);
   for (const element of autoDisabledElements?.keys() ?? []) candidates.add(element);
+  for (const element of manuallyHiddenElements?.keys() ?? []) candidates.add(element);
   let frameDepth = 0;
   let currentWindow = window;
   while (currentWindow !== currentWindow.top) {
@@ -179,6 +181,7 @@ function inspectPointerElements(minimumArea = 100000, minimumZIndex = 1000) {
 
     const registeredTypes = registry?.listenersByTarget.get(element);
     const widthRemoved = autoDisabledElements?.get(element);
+    const manuallyHidden = manuallyHiddenElements?.has(element) ?? false;
     const targetKind =
       element === window ? "window" : element === document ? "document" : "element";
     const alwaysInclude = targetKind === "document" && frameDepth >= 0;
@@ -221,11 +224,20 @@ function inspectPointerElements(minimumArea = 100000, minimumZIndex = 1000) {
         : null;
     const hasHighZIndex =
       Number.isFinite(zIndex) && zIndex > minimumZIndex && area > minimumArea;
-    if (!types.length && !alwaysInclude && !widthRemoved && !hasHighZIndex) continue;
+    if (
+      !types.length &&
+      !alwaysInclude &&
+      !widthRemoved &&
+      !hasHighZIndex &&
+      !manuallyHidden
+    ) {
+      continue;
+    }
     if (
       targetKind === "element" &&
       area <= minimumArea &&
-      !widthRemoved
+      !widthRemoved &&
+      !manuallyHidden
     ) {
       continue;
     }
@@ -255,6 +267,8 @@ function inspectPointerElements(minimumArea = 100000, minimumZIndex = 1000) {
       zIndex: Number.isFinite(zIndex) ? zIndex : null,
       highZIndex: hasHighZIndex,
       widthRemoved: Boolean(widthRemoved),
+      manualWidthZero: Boolean(registry?.manualWidthZeroElements?.has(element)),
+      manuallyHidden,
       frameUrl: location.href,
       frameDepth,
     });
@@ -266,6 +280,73 @@ function inspectPointerElements(minimumArea = 100000, minimumZIndex = 1000) {
     instrumentationActive: Boolean(registry),
     frameUrl: location.href,
   };
+}
+
+function toggleElementWidthZeroFromLastScan(targetIndex) {
+  const registry = window[Symbol.for("resource-origins.listener-registry")];
+  const target = registry?.lastScan?.[targetIndex];
+  if (!(target instanceof HTMLElement) || !registry?.autoDisabledElements) {
+    return { changed: false };
+  }
+
+  const manualStates = (registry.manualWidthZeroElements ??= new Map());
+  const existingState = manualStates.get(target);
+  if (existingState) {
+    if (existingState.width.value) {
+      target.style.setProperty(
+        "width",
+        existingState.width.value,
+        existingState.width.priority
+      );
+    } else {
+      target.style.removeProperty("width");
+    }
+    manualStates.delete(target);
+    registry.autoDisabledElements.delete(target);
+    return { changed: true, enabled: false };
+  }
+
+  const bounds = target.getBoundingClientRect();
+  const state = {
+    bounds: {
+      width: Math.round(bounds.width),
+      height: Math.round(bounds.height),
+      area: Math.round(bounds.width * bounds.height),
+    },
+    width: {
+      value: target.style.getPropertyValue("width"),
+      priority: target.style.getPropertyPriority("width"),
+    },
+  };
+  manualStates.set(target, state);
+  registry.autoDisabledElements.set(target, state.bounds);
+  target.style.setProperty("width", "0px", "important");
+  return { changed: true, enabled: true };
+}
+
+function toggleElementDisplayNoneFromLastScan(targetIndex) {
+  const registry = window[Symbol.for("resource-origins.listener-registry")];
+  const target = registry?.lastScan?.[targetIndex];
+  if (!(target instanceof HTMLElement)) return { changed: false };
+
+  const manualStates = (registry.manualDisplayNoneElements ??= new Map());
+  const existingState = manualStates.get(target);
+  if (existingState) {
+    if (existingState.value) {
+      target.style.setProperty("display", existingState.value, existingState.priority);
+    } else {
+      target.style.removeProperty("display");
+    }
+    manualStates.delete(target);
+    return { changed: true, enabled: false };
+  }
+
+  manualStates.set(target, {
+    value: target.style.getPropertyValue("display"),
+    priority: target.style.getPropertyPriority("display"),
+  });
+  target.style.setProperty("display", "none", "important");
+  return { changed: true, enabled: true };
 }
 
 function removePointerEventsFromLastScan() {
@@ -935,12 +1016,23 @@ function renderResults(query = "") {
       row.className = "resource-row";
       row.append(createTypeBadge(resource.type, ""));
 
+      const resourceInfo = document.createElement("div");
+      resourceInfo.className = "resource-info";
       const path = document.createElement("span");
       const parsedUrl = new URL(resource.url);
       path.className = "resource-path";
       path.textContent = `${parsedUrl.pathname}${parsedUrl.search}`;
       path.title = resource.url;
-      row.append(path);
+      resourceInfo.append(path);
+      const requester = document.createElement("span");
+      requester.className = "resource-requester";
+      const requesterDomains = resource.requesterDomains ?? [];
+      requester.textContent = requesterDomains.length
+        ? `Demandé par ${requesterDomains.join(", ")}`
+        : "Domaine demandeur indisponible";
+      requester.title = requesterDomains.join("\n") || requester.textContent;
+      resourceInfo.append(requester);
+      row.append(resourceInfo);
       if (resource.type === "iframe") {
         row.classList.add("resource-row-iframe");
         row.addEventListener("mouseenter", () => highlightIframeResource(resource, true));
@@ -1372,8 +1464,17 @@ function renderPointerElements(scan) {
     if (element.widthRemoved) {
       const widthState = document.createElement("span");
       widthState.className = "element-width-removed";
-      widthState.textContent = "Div overlay neutralisée";
+      widthState.textContent = element.manualWidthZero
+        ? "Largeur définie à 0 px"
+        : "Div overlay neutralisée";
       row.append(widthState);
+    }
+
+    if (element.manuallyHidden) {
+      const displayState = document.createElement("span");
+      displayState.className = "element-display-none";
+      displayState.textContent = "display: none";
+      row.append(displayState);
     }
 
     if (element.highZIndex) {
@@ -1382,6 +1483,71 @@ function renderPointerElements(scan) {
       zIndexState.textContent = `z-index ${element.zIndex}`;
       zIndexState.title = "Valeur supérieure au seuil global configuré.";
       row.append(zIndexState);
+    }
+
+    if (element.targetKind === "element") {
+      const widthButton = document.createElement("button");
+      widthButton.className = "element-width-button";
+      widthButton.type = "button";
+      widthButton.textContent = element.manualWidthZero ? "Restaurer" : "0 px";
+      widthButton.disabled = element.widthRemoved && !element.manualWidthZero;
+      widthButton.title = element.manualWidthZero
+        ? "Restaurer la largeur précédente"
+        : element.widthRemoved
+          ? "La largeur est déjà neutralisée automatiquement"
+          : "Définir la largeur de cet élément à zéro";
+      widthButton.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        widthButton.disabled = true;
+        highlightPointerElement(element, false);
+        try {
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          const [{ result: widthResult }] = await chrome.scripting.executeScript({
+            target: { tabId: tab.id, frameIds: [element.frameId] },
+            world: "MAIN",
+            func: toggleElementWidthZeroFromLastScan,
+            args: [element.targetIndex],
+          });
+          if (!widthResult.changed) throw new Error("Element is no longer available");
+          await scanPointerElements();
+        } catch {
+          widthButton.disabled = false;
+          document.querySelector("#elements-status").textContent =
+            "Impossible de modifier la largeur de cet élément.";
+        }
+      });
+      row.append(widthButton);
+
+      const displayButton = document.createElement("button");
+      displayButton.className = "element-display-button";
+      displayButton.type = "button";
+      displayButton.textContent = element.manuallyHidden ? "Restaurer" : "Masquer";
+      displayButton.title = element.manuallyHidden
+        ? "Restaurer l’affichage précédent"
+        : "Appliquer display:none à cet élément";
+      displayButton.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        displayButton.disabled = true;
+        highlightPointerElement(element, false);
+        try {
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          const [{ result: displayResult }] = await chrome.scripting.executeScript({
+            target: { tabId: tab.id, frameIds: [element.frameId] },
+            world: "MAIN",
+            func: toggleElementDisplayNoneFromLastScan,
+            args: [element.targetIndex],
+          });
+          if (!displayResult.changed) throw new Error("Element is no longer available");
+          await scanPointerElements();
+        } catch {
+          displayButton.disabled = false;
+          document.querySelector("#elements-status").textContent =
+            "Impossible de modifier l’affichage de cet élément.";
+        }
+      });
+      row.append(displayButton);
     }
 
     const frame = document.createElement("span");
@@ -1728,18 +1894,36 @@ async function scanActiveTab() {
     const resources = { css: [], js: [], iframe: [] };
     const orderedResources = [];
     const resourceIndexes = new Map();
+    const requesterDomainsByFrame = new Map(
+      frameScan.results.map(({ frameId, result }) => [
+        frameId,
+        new URL(result.pageUrl).hostname,
+      ])
+    );
     for (const { result, frameId } of frameScan.results) {
       for (const resource of result.orderedResources) {
         const resourceKey = `${resource.type}:${resource.url}`;
         const existingIndex = resourceIndexes.get(resourceKey);
         if (existingIndex !== undefined) {
-          const frameIds = orderedResources[existingIndex].frameIds;
+          const existingResource = orderedResources[existingIndex];
+          const frameIds = existingResource.frameIds;
           if (!frameIds.includes(frameId)) frameIds.push(frameId);
+          const requesterDomain = requesterDomainsByFrame.get(frameId);
+          if (
+            requesterDomain &&
+            !existingResource.requesterDomains.includes(requesterDomain)
+          ) {
+            existingResource.requesterDomains.push(requesterDomain);
+          }
           continue;
         }
         resourceIndexes.set(resourceKey, orderedResources.length);
         resources[resource.type].push(resource.url);
-        orderedResources.push({ ...resource, frameIds: [frameId] });
+        orderedResources.push({
+          ...resource,
+          frameIds: [frameId],
+          requesterDomains: [requesterDomainsByFrame.get(frameId)].filter(Boolean),
+        });
       }
     }
 

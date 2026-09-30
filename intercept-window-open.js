@@ -113,6 +113,29 @@
     confirmationEnabled = event.detail === true;
   });
 
+  function getCurrentEventSourceSelector() {
+    const event = window.event;
+    const source = event?.composedPath?.().find((item) => item instanceof Element);
+    if (!source) return "";
+    if (source.id) return `#${CSS.escape(source.id)}`;
+
+    const parts = [];
+    let current = source;
+    while (current instanceof Element && current !== document.documentElement) {
+      let part = current.tagName.toLowerCase();
+      const parent = current.parentElement;
+      if (parent) {
+        const siblings = [...parent.children].filter(
+          (sibling) => sibling.tagName === current.tagName
+        );
+        if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+      }
+      parts.unshift(part);
+      current = parent;
+    }
+    return parts.join(" > ");
+  }
+
   window.open = function (url, target, features) {
     const normalizedTarget = target == null ? "_blank" : String(target).toLowerCase();
     const opensAnotherContext = !["_self", "_parent", "_top"].includes(
@@ -139,6 +162,7 @@
             active: true,
             newWindow: popupRequested,
             popup: popupRequested,
+            sourceSelector: getCurrentEventSourceSelector(),
           },
         })
       );

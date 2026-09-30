@@ -35,7 +35,7 @@ async function isConfirmationEnabledForUrl(storageKey, url) {
 function runBestEffort(operation) {
   try {
     const result = operation();
-    if (result?.catch) result.catch(() => {});
+    if (result?.catch) result.catch(() => { });
   } catch {
     // The target tab or content script may no longer exist.
   }
@@ -48,6 +48,51 @@ function isWebUrl(value) {
   } catch {
     return false;
   }
+}
+
+function removeDeniedClickHandlers(selector) {
+  if (typeof selector !== "string" || !selector || selector.length > 2048) {
+    return { changed: false };
+  }
+
+  let element;
+  try {
+    element = document.querySelector(selector);
+  } catch {
+    return { changed: false };
+  }
+  if (!(element instanceof Element)) return { changed: false };
+
+  const registry = window[Symbol.for("resource-origins.listener-registry")];
+  const listeners = registry?.listenersByTarget.get(element);
+  let changed = false;
+  for (const type of ["click", "auxclick", "mousedown", "mouseup", "touchstart", "touchend", "pointerdown", "pointerup"]) {
+    for (const registration of [...(listeners?.get(type) ?? [])]) {
+      element.removeEventListener(type, registration.listener, registration.capture);
+      changed = true;
+    }
+
+    const property = `on${type}`;
+    if (typeof element[property] === "function") {
+      element[property] = null;
+      changed = true;
+    }
+    if (element.hasAttribute(property)) {
+      element.removeAttribute(property);
+      changed = true;
+    }
+  }
+
+  if (
+    (element instanceof HTMLAnchorElement || element instanceof SVGAElement) &&
+    element.hasAttribute("target") &&
+    !["_self", "_parent", "_top"].includes(element.getAttribute("target").toLowerCase())
+  ) {
+    element.removeAttribute("target");
+    changed = true;
+  }
+
+  return { changed };
 }
 
 function consumeApproval(openerTabId, targetUrl) {
@@ -318,9 +363,26 @@ chrome.runtime.onMessage.addListener((message, sender) => {
           active: message.active,
           newWindow: message.newWindow,
           popup: message.popup,
+          sourceSelector: message.sourceSelector,
+          sourceFrameId: sender.frameId ?? 0,
         },
         { frameId: 0 }
       )
+    );
+    return;
+  }
+
+  if (message.action === "remove-denied-click-handlers" && sender.tab?.id) {
+    const frameId = Number.isInteger(message.frameId) && message.frameId >= 0
+      ? message.frameId
+      : 0;
+    runBestEffort(() =>
+      chrome.scripting.executeScript({
+        target: { tabId: sender.tab.id, frameIds: [frameId] },
+        world: "MAIN",
+        func: removeDeniedClickHandlers,
+        args: [message.selector],
+      })
     );
     return;
   }
