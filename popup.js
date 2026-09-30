@@ -303,7 +303,7 @@ function toggleElementWidthZeroFromLastScan(targetIndex) {
     }
     manualStates.delete(target);
     registry.autoDisabledElements.delete(target);
-    return { changed: true, enabled: false };
+    return { changed: true, enabled: false, uid: registry.getModificationId?.(target) };
   }
 
   const bounds = target.getBoundingClientRect();
@@ -321,7 +321,7 @@ function toggleElementWidthZeroFromLastScan(targetIndex) {
   manualStates.set(target, state);
   registry.autoDisabledElements.set(target, state.bounds);
   target.style.setProperty("width", "0px", "important");
-  return { changed: true, enabled: true };
+  return { changed: true, enabled: true, uid: registry.getModificationId?.(target) };
 }
 
 function toggleElementDisplayNoneFromLastScan(targetIndex) {
@@ -338,7 +338,7 @@ function toggleElementDisplayNoneFromLastScan(targetIndex) {
       target.style.removeProperty("display");
     }
     manualStates.delete(target);
-    return { changed: true, enabled: false };
+    return { changed: true, enabled: false, uid: registry.getModificationId?.(target) };
   }
 
   manualStates.set(target, {
@@ -346,7 +346,94 @@ function toggleElementDisplayNoneFromLastScan(targetIndex) {
     priority: target.style.getPropertyPriority("display"),
   });
   target.style.setProperty("display", "none", "important");
-  return { changed: true, enabled: true };
+  return { changed: true, enabled: true, uid: registry.getModificationId?.(target) };
+}
+
+function inspectModifiedElements() {
+  const registry = window[Symbol.for("resource-origins.listener-registry")];
+  let frameDepth = 0;
+  let currentWindow = window;
+  while (currentWindow !== currentWindow.top) {
+    frameDepth += 1;
+    currentWindow = currentWindow.parent;
+  }
+
+  const createSelector = (element) => {
+    if (element.id) return `#${CSS.escape(element.id)}`;
+
+    const parts = [];
+    let current = element;
+    while (current instanceof Element && parts.length < 4) {
+      let part = current.tagName.toLowerCase();
+      const classes = [...current.classList].slice(0, 2);
+      if (classes.length) part += `.${classes.map((name) => CSS.escape(name)).join(".")}`;
+
+      const parent = current.parentElement;
+      if (parent) {
+        const siblings = [...parent.children].filter(
+          (sibling) => sibling.tagName === current.tagName
+        );
+        if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+      }
+      parts.unshift(part);
+      current = parent;
+    }
+    return parts.join(" > ");
+  };
+
+  const modifications = new Map();
+  const addModification = (element, modification) => {
+    if (!(element instanceof Element)) return;
+    const list = modifications.get(element) ?? [];
+    list.push(modification);
+    modifications.set(element, list);
+  };
+
+  for (const [element, state] of registry?.deniedElements ?? []) {
+    addModification(element, {
+      kind: "deny",
+      types: state.types,
+      targetRemoved: state.targetRemoved,
+      url: state.url,
+      at: state.at,
+    });
+  }
+  for (const element of registry?.autoDisabledElements?.keys() ?? []) {
+    addModification(element, {
+      kind: registry.manualWidthZeroElements?.has(element) ? "width-manual" : "width-auto",
+    });
+  }
+  for (const element of registry?.manualDisplayNoneElements?.keys() ?? []) {
+    addModification(element, { kind: "hidden" });
+  }
+
+  const scan = [...modifications.keys()];
+  if (registry) registry.lastModifiedScan = scan;
+  return {
+    instrumentationActive: Boolean(registry),
+    elements: scan.map((element, targetIndex) => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        uid: registry?.getModificationId?.(element) ?? "",
+        tag: element.tagName.toLowerCase(),
+        targetKind: "element",
+        targetIndex,
+        scanKey: "lastModifiedScan",
+        selector: createSelector(element),
+        label:
+          element.getAttribute("aria-label") ||
+          element.getAttribute("title") ||
+          element.textContent?.trim().replace(/\s+/g, " ").slice(0, 80) ||
+          "",
+        modifications: modifications.get(element),
+        connected: element.isConnected,
+        width: Math.round(bounds.width),
+        height: Math.round(bounds.height),
+        frameUrl: location.href,
+        frameDepth,
+      };
+    }),
+  };
 }
 
 function removePointerEventsFromLastScan() {
@@ -523,10 +610,10 @@ function removeEventFromLastScan(targetIndex, eventType) {
   return { listenersRemoved, inlineHandlersRemoved };
 }
 
-function setPointerElementHighlight(targetIndex, enabled) {
+function setPointerElementHighlight(targetIndex, enabled, scanKey = "lastScan") {
   const target = window[
     Symbol.for("resource-origins.listener-registry")
-  ]?.lastScan?.[targetIndex];
+  ]?.[scanKey]?.[targetIndex];
   if (!target) return;
 
   const stateKey = Symbol.for("resource-origins.hover-highlight-states");
@@ -1510,6 +1597,7 @@ function renderPointerElements(scan) {
             args: [element.targetIndex],
           });
           if (!widthResult.changed) throw new Error("Element is no longer available");
+          syncModificationHistory(element, "width-manual", widthResult);
           await scanPointerElements();
         } catch {
           widthButton.disabled = false;
@@ -1540,6 +1628,7 @@ function renderPointerElements(scan) {
             args: [element.targetIndex],
           });
           if (!displayResult.changed) throw new Error("Element is no longer available");
+          syncModificationHistory(element, "hidden", displayResult);
           await scanPointerElements();
         } catch {
           displayButton.disabled = false;
@@ -1605,7 +1694,7 @@ function highlightPointerElement(element, enabled) {
     target: { tabId: activeTabId, frameIds: [element.frameId] },
     world: "MAIN",
     func: setPointerElementHighlight,
-    args: [element.targetIndex, enabled],
+    args: [element.targetIndex, enabled, element.scanKey ?? "lastScan"],
   }).catch(() => {});
   if (!enabled) return;
 
@@ -1754,6 +1843,214 @@ async function scanPointerElements() {
     document.querySelector("#remove-events").disabled = true;
     document.querySelector("#remove-trigger-events").disabled = true;
     return false;
+  }
+}
+
+function syncModificationHistory(element, kind, result) {
+  if (!result.uid || activeTabId == null) return;
+
+  const message = result.enabled
+    ? {
+        action: "record-modification",
+        tabId: activeTabId,
+        record: {
+          uid: result.uid,
+          kind,
+          selector: element.selector,
+          tag: element.tag,
+          label: element.label,
+          width: element.width,
+          height: element.height,
+          frameUrl: element.frameUrl,
+          frameDepth: element.frameDepth,
+        },
+      }
+    : { action: "forget-modification", tabId: activeTabId, uid: result.uid, kind };
+  chrome.runtime.sendMessage(message).catch(() => {});
+}
+
+function mergeModificationHistory(liveElements, history) {
+  const liveUids = new Set(liveElements.map((element) => element.uid).filter(Boolean));
+  const goneElements = new Map();
+  for (const entry of history) {
+    if (liveUids.has(entry.uid)) continue;
+
+    const element = goneElements.get(entry.uid) ?? {
+      uid: entry.uid,
+      tag: entry.tag,
+      targetKind: "element",
+      selector: entry.selector,
+      label: entry.label,
+      width: entry.width,
+      height: entry.height,
+      frameUrl: entry.frameUrl,
+      frameDepth: entry.frameDepth,
+      connected: false,
+      gone: true,
+      modifications: [],
+    };
+    element.modifications.push({
+      kind: entry.kind,
+      types: entry.types,
+      targetRemoved: entry.targetRemoved,
+      url: entry.url,
+      at: entry.at,
+    });
+    goneElements.set(entry.uid, element);
+  }
+  return [...liveElements, ...goneElements.values()];
+}
+
+const modificationLabels = {
+  deny: "Refusé (deny)",
+  "width-auto": "0 px (auto)",
+  "width-manual": "0 px (manuel)",
+  hidden: "Masqué",
+};
+
+function renderModifiedElements(scan) {
+  const results = document.querySelector("#modified-results");
+  const status = document.querySelector("#modified-status");
+  results.replaceChildren();
+
+  if (!scan.instrumentationActive) {
+    status.className = "elements-status elements-warning";
+    status.textContent = "Rechargez la page pour suivre les modifications de l’extension.";
+  } else {
+    status.className = "elements-status";
+    status.textContent = `${scan.elements.length} élément${
+      scan.elements.length > 1 ? "s" : ""
+    } modifié${scan.elements.length > 1 ? "s" : ""} dans ${scan.framesScanned} frame${
+      scan.framesScanned > 1 ? "s" : ""
+    }${scan.framesSkipped ? ` · ${scan.framesSkipped} inaccessible${scan.framesSkipped > 1 ? "s" : ""}` : ""}`;
+  }
+
+  if (!scan.elements.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "Aucun élément modifié par l’extension.";
+    results.append(empty);
+    return;
+  }
+
+  for (const element of scan.elements) {
+    const row = document.createElement("article");
+    row.className = "element-row";
+    if (!element.gone) {
+      row.addEventListener("mouseenter", () => highlightPointerElement(element, true));
+      row.addEventListener("mouseleave", () => highlightPointerElement(element, false));
+    }
+
+    const heading = document.createElement("div");
+    heading.className = "element-heading";
+    const tag = document.createElement("strong");
+    tag.className = "element-tag";
+    tag.textContent = element.tag ? `<${element.tag}>` : "Source inconnue";
+    const size = document.createElement("span");
+    size.textContent = element.tag ? `${element.width} × ${element.height} px` : "";
+    heading.append(tag, size);
+
+    const badges = document.createElement("div");
+    badges.className = "modification-badges";
+    const destinations = new Set();
+    for (const modification of element.modifications) {
+      const badge = document.createElement("span");
+      badge.className = "modification-badge";
+      badge.textContent = modificationLabels[modification.kind] ?? modification.kind;
+      if (modification.kind === "deny") {
+        const details = [...(modification.types ?? [])];
+        if (modification.targetRemoved) details.push("attribut target");
+        if (modification.url) destinations.add(modification.url);
+        badge.title = `${
+          details.length ? `Retiré : ${details.join(", ")}` : "Aucun gestionnaire retiré"
+        }\n${new Date(modification.at).toLocaleTimeString("fr-FR")}`;
+      }
+      badges.append(badge);
+    }
+    if (!element.connected && element.tag) {
+      const detached = document.createElement("span");
+      detached.className = "modification-badge modification-detached";
+      detached.textContent = element.gone ? "N’existe plus" : "Retiré du DOM";
+      detached.title = element.gone
+        ? "L’élément ou sa frame a été supprimé ; données relevées au moment de la modification."
+        : "";
+      badges.append(detached);
+    }
+
+    const frame = document.createElement("span");
+    frame.className = "element-frame";
+    frame.textContent = element.frameDepth
+      ? `Iframe · niveau ${element.frameDepth}`
+      : "Page principale";
+    frame.title = element.frameUrl;
+
+    row.append(heading, badges, frame);
+    if (element.selector) {
+      const selector = document.createElement("code");
+      selector.textContent = element.selector;
+      selector.title = element.selector;
+      row.append(selector);
+    }
+    for (const url of destinations) {
+      const destination = document.createElement("p");
+      destination.textContent = `Vers ${url}`;
+      destination.title = url;
+      row.append(destination);
+    }
+    if (element.label) {
+      const label = document.createElement("p");
+      label.textContent = element.label;
+      row.append(label);
+    }
+    results.append(row);
+  }
+}
+
+async function scanModifiedElements() {
+  const status = document.querySelector("#modified-status");
+  status.className = "elements-status";
+  status.textContent = "Recherche des éléments modifiés…";
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    activeTabId = tab.id;
+    const historyKey = `modifications:${tab.id}`;
+    const [execution, { [historyKey]: history = [] }] = await Promise.all([
+      executeInEveryFrame(tab.id, inspectModifiedElements, [], 5000),
+      chrome.storage.session.get(historyKey),
+    ]);
+    const framesById = new Map(execution.frameTree.map((frame) => [frame.frameId, frame]));
+    const getAncestorFrames = (frameId) => {
+      const ancestors = [];
+      let childFrame = framesById.get(frameId);
+      while (childFrame && childFrame.parentFrameId >= 0) {
+        const parentFrame = framesById.get(childFrame.parentFrameId);
+        if (!parentFrame) break;
+        ancestors.push({ frameId: parentFrame.frameId, childUrl: childFrame.url });
+        childFrame = parentFrame;
+      }
+      return ancestors;
+    };
+    renderModifiedElements({
+      elements: mergeModificationHistory(
+        execution.results.flatMap(({ result, frameId }) =>
+          result.elements.map((element) => ({
+            ...element,
+            frameId,
+            ancestorFrames: getAncestorFrames(frameId),
+          }))
+        ),
+        history
+      ),
+      instrumentationActive: execution.results.every(
+        ({ result }) => result.instrumentationActive
+      ),
+      framesScanned: execution.results.length,
+      framesSkipped: execution.framesSkipped,
+    });
+  } catch {
+    status.className = "elements-status elements-warning";
+    status.textContent = "Cette page ne peut pas être analysée.";
   }
 }
 
@@ -1971,6 +2268,7 @@ const domainSettingsAction = document.querySelector("#open-domain-settings");
 headerAction.addEventListener("click", () => {
   const activeTab = document.querySelector('[role="tab"][aria-selected="true"]');
   if (activeTab?.id === "elements-tab") scanPointerElements();
+  else if (activeTab?.id === "modified-tab") scanModifiedElements();
   else scanActiveTab();
 });
 domainSettingsAction.addEventListener("click", () => {
@@ -2180,12 +2478,17 @@ function activateTab(tabButton) {
   headerAction.hidden = isSettingsTab;
   domainSettingsAction.hidden = !isSettingsTab;
   headerAction.textContent =
-    tabButton.id === "elements-tab" ? "Analyser" : "Actualiser";
+    tabButton.id === "elements-tab" || tabButton.id === "modified-tab"
+      ? "Analyser"
+      : "Actualiser";
   headerAction.title =
     tabButton.id === "elements-tab"
       ? "Analyser les éléments"
-      : "Relancer l’analyse des ressources";
+      : tabButton.id === "modified-tab"
+        ? "Lister les éléments modifiés"
+        : "Relancer l’analyse des ressources";
   if (tabButton.id === "elements-tab" && !elementsScanned) scanPointerElements();
+  if (tabButton.id === "modified-tab") scanModifiedElements();
 }
 
 for (const [index, button] of tabButtons.entries()) {

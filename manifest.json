@@ -27,7 +27,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["intercept-window-open.js", "disable-dontfoid.js"],
+      "js": ["intercept-window-open.js", "disable-elements.js"],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true,

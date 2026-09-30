@@ -15,7 +15,8 @@ const LARGE_INTERACTIVE_DIV_SETTING_EVENT =
 const PROMPT_SOURCE = "resource-origins-tab-prompt";
 const confirmationQueue = [];
 let currentConfirmation = null;
-let trustedClickSourceSelector = "";
+let trustedClickSource = null;
+let trustedClickSourceTimeoutId = null;
 let promptHost = null;
 let promptPort = null;
 let promptReady = null;
@@ -82,6 +83,91 @@ function sendMessageBestEffort(message) {
     // The extension may have been reloaded while this page stayed open.
   }
 }
+
+let sourceHighlight = null;
+
+function setSourceHighlight(selector) {
+  if (sourceHighlight) {
+    cancelAnimationFrame(sourceHighlight.animationFrameId);
+    sourceHighlight.overlay.remove();
+    sourceHighlight = null;
+  }
+  if (typeof selector !== "string" || !selector) return;
+
+  let element;
+  try {
+    element = document.querySelector(selector);
+  } catch {
+    return;
+  }
+  if (!(element instanceof Element)) return;
+
+  const overlay = document.createElement("div");
+  overlay.setAttribute("aria-hidden", "true");
+  for (const [property, value] of Object.entries({
+    position: "fixed",
+    "z-index": "2147483646",
+    "pointer-events": "none",
+    "box-sizing": "border-box",
+    background: "rgba(255, 59, 48, 0.28)",
+    border: "3px solid #ff3b30",
+    "border-radius": "2px",
+    margin: "0",
+    padding: "0",
+  })) {
+    overlay.style.setProperty(property, value, "important");
+  }
+  document.documentElement.append(overlay);
+
+  const highlight = { overlay, animationFrameId: null };
+  sourceHighlight = highlight;
+  const updatePosition = () => {
+    if (sourceHighlight !== highlight) return;
+    if (!element.isConnected) {
+      setSourceHighlight("");
+      return;
+    }
+    const bounds = element.getBoundingClientRect();
+    overlay.style.setProperty("left", `${bounds.left - 4}px`, "important");
+    overlay.style.setProperty("top", `${bounds.top - 4}px`, "important");
+    overlay.style.setProperty("width", `${bounds.width + 8}px`, "important");
+    overlay.style.setProperty("height", `${bounds.height + 8}px`, "important");
+    highlight.animationFrameId = requestAnimationFrame(updatePosition);
+  };
+  updatePosition();
+}
+
+function highlightConfirmationSource(frameId, selector) {
+  if (!frameId) {
+    setSourceHighlight(selector);
+    return;
+  }
+  sendMessageBestEffort({
+    action: "highlight-confirmation-source",
+    selector,
+    frameId,
+  });
+}
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.action === "set-source-highlight") setSourceHighlight(message.selector);
+});
+
+window.addEventListener("resource-origins:element-modified", (event) => {
+  if (event.detail && typeof event.detail === "object") {
+    sendMessageBestEffort({ action: "record-modification", record: event.detail });
+  }
+});
+
+window.addEventListener("resource-origins:element-restored", (event) => {
+  if (event.detail && typeof event.detail === "object") {
+    sendMessageBestEffort({
+      action: "forget-modification",
+      uid: event.detail.uid,
+      kind: event.detail.kind,
+    });
+  }
+});
 
 function getFrameDepth() {
   let depth = 0;
@@ -256,6 +342,10 @@ async function showNextConfirmation() {
 
   currentConfirmation = confirmationQueue.shift();
   promptHost.style.display = "block";
+  highlightConfirmationSource(
+    currentConfirmation.sourceFrameId,
+    currentConfirmation.sourceSelector
+  );
   promptPort.postMessage({
     action: "show",
     url: currentConfirmation.url,
@@ -351,6 +441,7 @@ async function handlePromptResponse(event) {
 
   handlingPromptResponse = true;
   const confirmation = currentConfirmation;
+  highlightConfirmationSource(confirmation.sourceFrameId, "");
   window.clearTimeout(confirmation.timeoutId);
   confirmation.timeoutId = null;
   try {
@@ -374,15 +465,16 @@ async function handlePromptResponse(event) {
     // Continue with this confirmation even if the preference could not be saved.
   }
 
-  if (action === "deny" && event.data.removeTrigger === true) {
-    if (confirmation.sourceSelector) {
-      sendMessageBestEffort({
-        action: "remove-denied-click-handlers",
-        selector: confirmation.sourceSelector,
-        frameId: confirmation.sourceFrameId,
-      });
-    }
-  } else if (action !== "deny") {
+  if (action === "deny") {
+    sendMessageBestEffort({
+      action: "record-denial",
+      selector: confirmation.sourceSelector,
+      snapshot: confirmation.sourceSnapshot,
+      frameId: confirmation.sourceFrameId,
+      url: confirmation.url,
+      removeHandlers: event.data.removeTrigger === true,
+    });
+  } else {
     allowCurrentConfirmation();
   }
 
@@ -405,6 +497,7 @@ function requestConfirmation(url, active = true, options = {}) {
       newWindow: options.newWindow === true,
       popup: options.popup === true,
       sourceSelector: options.sourceSelector || "",
+      sourceSnapshot: options.sourceSnapshot ?? null,
     });
     return true;
   }
@@ -437,6 +530,7 @@ function requestConfirmation(url, active = true, options = {}) {
     newWindow: options.newWindow === true,
     popup: options.popup === true,
     sourceSelector: options.sourceSelector || "",
+    sourceSnapshot: options.sourceSnapshot ?? null,
     sourceFrameId: options.sourceFrameId ?? 0,
     enqueuedAt: Date.now(),
     expiresAt: null,
@@ -457,7 +551,7 @@ window.addEventListener(REQUEST_EVENT, (event) => {
     requestConfirmation(event.detail.url, event.detail.active, {
       newWindow: event.detail.newWindow === true,
       popup: event.detail.popup === true,
-      sourceSelector: trustedClickSourceSelector,
+      ...getSourceOptions(findElement(event.detail.sourceSelector) ?? trustedClickSource),
       message: event.detail.newWindow
         ? "This site wants to open a new window"
         : undefined,
@@ -468,12 +562,16 @@ window.addEventListener(REQUEST_EVENT, (event) => {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.action !== "show-tab-confirmation") return;
 
+  // Tabs detected by the background carry no source; fall back to the last click here.
+  const source = message.sourceSelector
+    ? { sourceSelector: message.sourceSelector, sourceSnapshot: message.sourceSnapshot ?? null }
+    : getSourceOptions(trustedClickSource);
   sendResponse({
     shown: requestConfirmation(message.url, message.active, {
       newWindow: message.newWindow === true,
       popup: message.popup === true,
-      sourceSelector: message.sourceSelector || "",
-      sourceFrameId: message.sourceFrameId,
+      ...source,
+      sourceFrameId: message.sourceSelector ? message.sourceFrameId : 0,
       message: message.newWindow
         ? "This site wants to open a new window"
         : undefined,
@@ -526,11 +624,46 @@ function getElementSelector(element) {
 
 function rememberTrustedClickSource(event) {
   if (!event.isTrusted) return;
-  const source = event.composedPath().find((item) => item instanceof Element);
-  trustedClickSourceSelector = getElementSelector(source);
-  window.setTimeout(() => {
-    trustedClickSourceSelector = "";
-  }, 0);
+  trustedClickSource = event.composedPath().find((item) => item instanceof Element) ?? null;
+  window.clearTimeout(trustedClickSourceTimeoutId);
+  // Keeps the source for handlers that call window.open asynchronously after the gesture.
+  trustedClickSourceTimeoutId = window.setTimeout(() => {
+    trustedClickSource = null;
+  }, 1000);
+}
+
+// Captured immediately: overlays often remove themselves right after the click.
+function getSourceOptions(element) {
+  if (!(element instanceof Element)) return { sourceSelector: "", sourceSnapshot: null };
+
+  const bounds = element.getBoundingClientRect();
+  const selector = getElementSelector(element);
+  return {
+    sourceSelector: selector,
+    sourceSnapshot: {
+      selector,
+      tag: element.tagName.toLowerCase(),
+      label: (
+        element.getAttribute("aria-label") ||
+        element.getAttribute("title") ||
+        element.textContent?.trim().replace(/\s+/g, " ") ||
+        ""
+      ).slice(0, 80),
+      width: Math.round(bounds.width),
+      height: Math.round(bounds.height),
+      frameUrl: location.href,
+      frameDepth: getFrameDepth(),
+    },
+  };
+}
+
+function findElement(selector) {
+  if (typeof selector !== "string" || !selector) return null;
+  try {
+    return document.querySelector(selector);
+  } catch {
+    return null;
+  }
 }
 
 function confirmNewTab(event) {
@@ -570,7 +703,7 @@ function confirmNewTab(event) {
       destination.href,
       !(event.ctrlKey || event.metaKey || event.button === 1),
       {
-        sourceSelector: event.isTrusted ? getElementSelector(link) : "",
+        ...getSourceOptions(event.isTrusted ? link : trustedClickSource),
         ...(opensNewWindow
           ? { newWindow: true, message: "This link wants to open a new window" }
           : {}),
@@ -589,12 +722,14 @@ function confirmNewTab(event) {
     requestConfirmation(destination.href, true, {
       mode: "same-tab",
       message: "This link leads to a different domain",
+      ...getSourceOptions(event.isTrusted ? link : trustedClickSource),
     });
   }
 }
 
-document.addEventListener("click", rememberTrustedClickSource, true);
-document.addEventListener("auxclick", rememberTrustedClickSource, true);
+for (const type of ["click", "auxclick", "mousedown", "pointerdown", "touchstart"]) {
+  window.addEventListener(type, rememberTrustedClickSource, true);
+}
 document.addEventListener("click", confirmNewTab, true);
 document.addEventListener("auxclick", confirmNewTab, true);
 })();

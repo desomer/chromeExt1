@@ -91,7 +91,7 @@ h1 {
 .tabs {
   display: grid;
   flex: none;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   padding: 0 20px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
@@ -131,7 +131,8 @@ main {
 }
 
 #resources-panel:not([hidden]),
-#elements-panel:not([hidden]) {
+#elements-panel:not([hidden]),
+#modified-panel:not([hidden]) {
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -815,6 +816,27 @@ main {
   color: var(--green);
   font-family: Consolas, monospace;
   font-size: 12px;
+}
+
+.modification-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.modification-badge {
+  padding: 2px 5px;
+  color: var(--red);
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--red-soft);
+  border-radius: 3px;
+}
+
+.modification-detached {
+  color: var(--amber);
+  background: var(--amber-soft);
 }
 
 .element-row code {

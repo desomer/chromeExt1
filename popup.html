@@ -48,6 +48,17 @@
         Overlays
       </button>
       <button
+        id="modified-tab"
+        class="tab-button"
+        type="button"
+        role="tab"
+        aria-selected="false"
+        aria-controls="modified-panel"
+        tabindex="-1"
+      >
+        Modifiés
+      </button>
+      <button
         id="settings-tab"
         class="tab-button"
         type="button"
@@ -264,6 +275,25 @@
           Ouvrez cet onglet pour analyser la page.
         </p>
         <div id="elements-results" class="elements-results"></div>
+      </section>
+
+      <section
+        id="modified-panel"
+        class="tab-panel elements-panel"
+        role="tabpanel"
+        aria-labelledby="modified-tab"
+        hidden
+      >
+        <div class="elements-heading">
+          <div>
+            <h2>Éléments modifiés</h2>
+            <p>Refusés (deny), largeur 0 px ou masqués par l’extension</p>
+          </div>
+        </div>
+        <p id="modified-status" class="elements-status">
+          Ouvrez cet onglet pour analyser la page.
+        </p>
+        <div id="modified-results" class="elements-results"></div>
       </section>
     </main>
 

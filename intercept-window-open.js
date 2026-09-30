@@ -4,6 +4,7 @@
   const LISTENER_REGISTRY = Symbol.for("resource-origins.listener-registry");
   const trackedTargets = new Set();
   const listenersByTarget = new WeakMap();
+  const modificationIds = new WeakMap();
   const originalAddEventListener = EventTarget.prototype.addEventListener;
   const originalRemoveEventListener = EventTarget.prototype.removeEventListener;
   const originalOpen = window.open;
@@ -95,6 +96,15 @@
       listenersByTarget,
       autoDisabledElements: new Map(),
       contextTarget: null,
+      // Stable id so the popup can match live elements with the persisted history.
+      getModificationId(element) {
+        let id = modificationIds.get(element);
+        if (!id) {
+          id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+          modificationIds.set(element, id);
+        }
+        return id;
+      },
     },
   });
 

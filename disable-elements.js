@@ -4,6 +4,8 @@ const ELEMENT_MINIMUM_AREA_EVENT = "resource-origins:element-minimum-area";
 const LARGE_INTERACTIVE_DIV_SETTING_EVENT =
   "resource-origins:large-interactive-div-setting";
 const LISTENER_REGISTRY = Symbol.for("resource-origins.listener-registry");
+const ELEMENT_MODIFIED_EVENT = "resource-origins:element-modified";
+const ELEMENT_RESTORED_EVENT = "resource-origins:element-restored";
 const INTERACTION_EVENT_TYPES = [
     "mousedown",
     "mouseup",
@@ -37,6 +39,72 @@ let featureEnabled = false;
 const originalWidths = new WeakMap();
 const modifiedElements = new Set();
 
+function createSelector(element) {
+  if (element.id) return `#${CSS.escape(element.id)}`;
+
+  const parts = [];
+  let current = element;
+  while (current instanceof Element && parts.length < 4) {
+    let part = current.tagName.toLowerCase();
+    const classes = [...current.classList].slice(0, 2);
+    if (classes.length) part += `.${classes.map((name) => CSS.escape(name)).join(".")}`;
+
+    const parent = current.parentElement;
+    if (parent) {
+      const siblings = [...parent.children].filter(
+        (sibling) => sibling.tagName === current.tagName
+      );
+      if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+    }
+    parts.unshift(part);
+    current = parent;
+  }
+  return parts.join(" > ");
+}
+
+function getFrameDepth() {
+  let depth = 0;
+  let currentWindow = window;
+  while (currentWindow !== currentWindow.top) {
+    depth += 1;
+    currentWindow = currentWindow.parent;
+  }
+  return depth;
+}
+
+function notifyModification(element, bounds) {
+  const uid = window[LISTENER_REGISTRY]?.getModificationId?.(element);
+  if (!uid) return;
+  window.dispatchEvent(
+    new CustomEvent(ELEMENT_MODIFIED_EVENT, {
+      detail: {
+        uid,
+        kind: "width-auto",
+        selector: createSelector(element),
+        tag: element.tagName.toLowerCase(),
+        label: (
+          element.getAttribute("aria-label") ||
+          element.getAttribute("title") ||
+          element.textContent?.trim().replace(/\s+/g, " ") ||
+          ""
+        ).slice(0, 80),
+        width: Math.round(bounds.width),
+        height: Math.round(bounds.height),
+        frameUrl: location.href,
+        frameDepth: getFrameDepth(),
+      },
+    })
+  );
+}
+
+function notifyRestoration(element) {
+  const uid = window[LISTENER_REGISTRY]?.getModificationId?.(element);
+  if (!uid) return;
+  window.dispatchEvent(
+    new CustomEvent(ELEMENT_RESTORED_EVENT, { detail: { uid, kind: "width-auto" } })
+  );
+}
+
 function restoreModifiedElements() {
   const registry = window[LISTENER_REGISTRY];
   for (const element of modifiedElements) {
@@ -49,6 +117,7 @@ function restoreModifiedElements() {
       }
     }
     registry?.autoDisabledElements?.delete(element);
+    notifyRestoration(element);
   }
   modifiedElements.clear();
 }
@@ -95,6 +164,7 @@ function disableDontfoidPointerEvents() {
           priority: target.style.getPropertyPriority("width"),
         });
       }
+      if (!modifiedElements.has(target)) notifyModification(target, bounds);
       modifiedElements.add(target);
       target.style.setProperty("width", "0px");
     }

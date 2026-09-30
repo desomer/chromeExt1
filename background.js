@@ -50,7 +50,81 @@ function isWebUrl(value) {
   }
 }
 
-function removeDeniedClickHandlers(selector) {
+const MODIFICATION_KINDS = new Set(["deny", "width-auto", "width-manual", "hidden"]);
+let modificationHistoryQueue = Promise.resolve();
+
+function sanitizeModification(record) {
+  if (!record || typeof record !== "object" || !MODIFICATION_KINDS.has(record.kind)) {
+    return null;
+  }
+  const text = (value, max) => (typeof value === "string" ? value.slice(0, max) : "");
+  const number = (value) => (Number.isFinite(value) ? Math.round(value) : 0);
+  const uid = text(record.uid, 64);
+  if (!uid) return null;
+
+  return {
+    uid,
+    kind: record.kind,
+    selector: text(record.selector, 2048),
+    tag: text(record.tag, 64),
+    label: text(record.label, 120),
+    width: number(record.width),
+    height: number(record.height),
+    frameUrl: text(record.frameUrl, 2048),
+    frameDepth: number(record.frameDepth),
+    types: Array.isArray(record.types)
+      ? record.types
+          .filter((type) => typeof type === "string")
+          .slice(0, 20)
+          .map((type) => type.slice(0, 32))
+      : [],
+    targetRemoved: record.targetRemoved === true,
+    url: text(record.url, 2048),
+    at: Date.now(),
+  };
+}
+
+// Serialized so concurrent read-modify-write cycles don't drop entries.
+function queueModificationHistory(operation) {
+  modificationHistoryQueue = modificationHistoryQueue.then(operation).catch(() => {});
+}
+
+function updateModificationHistory(tabId, update) {
+  const key = `modifications:${tabId}`;
+  queueModificationHistory(async () => {
+    const { [key]: history = [] } = await chrome.storage.session.get(key);
+    await chrome.storage.session.set({ [key]: update(history).slice(-200) });
+  });
+}
+
+function recordModification(tabId, record) {
+  const entry = sanitizeModification(record);
+  if (!entry) return;
+
+  updateModificationHistory(tabId, (history) => {
+    const previous = history.find(
+      (item) => item.uid === entry.uid && item.kind === entry.kind
+    );
+    if (previous) {
+      entry.types = [...new Set([...previous.types, ...entry.types])];
+      entry.targetRemoved ||= previous.targetRemoved;
+    }
+    return [...history.filter((item) => item !== previous), entry];
+  });
+}
+
+function forgetModification(tabId, uid, kind) {
+  if (typeof uid !== "string" || !MODIFICATION_KINDS.has(kind)) return;
+  updateModificationHistory(tabId, (history) =>
+    history.filter((item) => item.uid !== uid || item.kind !== kind)
+  );
+}
+
+function clearModificationHistory(tabId) {
+  queueModificationHistory(() => chrome.storage.session.remove(`modifications:${tabId}`));
+}
+
+function removeDeniedClickHandlers(selector, destinationUrl, removeHandlers) {
   if (typeof selector !== "string" || !selector || selector.length > 2048) {
     return { changed: false };
   }
@@ -65,34 +139,80 @@ function removeDeniedClickHandlers(selector) {
 
   const registry = window[Symbol.for("resource-origins.listener-registry")];
   const listeners = registry?.listenersByTarget.get(element);
-  let changed = false;
-  for (const type of ["click", "auxclick", "mousedown", "mouseup", "touchstart", "touchend", "pointerdown", "pointerup"]) {
+  const removedTypes = new Set();
+  const triggerTypes = removeHandlers
+    ? ["click", "auxclick", "mousedown", "mouseup", "touchstart", "touchend", "pointerdown", "pointerup"]
+    : [];
+  for (const type of triggerTypes) {
     for (const registration of [...(listeners?.get(type) ?? [])]) {
       element.removeEventListener(type, registration.listener, registration.capture);
-      changed = true;
+      removedTypes.add(type);
     }
 
     const property = `on${type}`;
     if (typeof element[property] === "function") {
       element[property] = null;
-      changed = true;
+      removedTypes.add(type);
     }
     if (element.hasAttribute(property)) {
       element.removeAttribute(property);
-      changed = true;
+      removedTypes.add(type);
     }
   }
 
+  let targetRemoved = false;
   if (
+    removeHandlers &&
     (element instanceof HTMLAnchorElement || element instanceof SVGAElement) &&
     element.hasAttribute("target") &&
     !["_self", "_parent", "_top"].includes(element.getAttribute("target").toLowerCase())
   ) {
     element.removeAttribute("target");
-    changed = true;
+    targetRemoved = true;
   }
 
-  return { changed };
+  const changed = removedTypes.size > 0 || targetRemoved;
+  if (registry) {
+    const deniedElements = (registry.deniedElements ??= new Map());
+    const previous = deniedElements.get(element);
+    deniedElements.set(element, {
+      types: [...new Set([...(previous?.types ?? []), ...removedTypes])],
+      targetRemoved: Boolean(previous?.targetRemoved || targetRemoved),
+      url: String(destinationUrl ?? ""),
+      at: Date.now(),
+    });
+  }
+  if (!registry?.getModificationId) return { changed };
+
+  let frameDepth = 0;
+  let currentWindow = window;
+  while (currentWindow !== currentWindow.top) {
+    frameDepth += 1;
+    currentWindow = currentWindow.parent;
+  }
+  const bounds = element.getBoundingClientRect();
+  return {
+    changed,
+    record: {
+      uid: registry.getModificationId(element),
+      kind: "deny",
+      selector,
+      tag: element.tagName.toLowerCase(),
+      label: (
+        element.getAttribute("aria-label") ||
+        element.getAttribute("title") ||
+        element.textContent?.trim().replace(/\s+/g, " ") ||
+        ""
+      ).slice(0, 80),
+      width: Math.round(bounds.width),
+      height: Math.round(bounds.height),
+      frameUrl: location.href,
+      frameDepth,
+      types: [...removedTypes],
+      targetRemoved,
+      url: String(destinationUrl ?? ""),
+    },
+  };
 }
 
 function consumeApproval(openerTabId, targetUrl) {
@@ -177,6 +297,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   pendingTabs.delete(tabId);
   navigationStartTimes.delete(tabId);
+  clearModificationHistory(tabId);
 });
 
 async function guardCreatedDownload(item) {
@@ -243,6 +364,7 @@ chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   if (details.frameId !== 0) return;
 
   navigationStartTimes.set(details.tabId, details.timeStamp);
+  clearModificationHistory(details.tabId);
   runBestEffort(() => chrome.action.setBadgeText({ tabId: details.tabId, text: "" }));
 });
 
@@ -364,6 +486,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
           newWindow: message.newWindow,
           popup: message.popup,
           sourceSelector: message.sourceSelector,
+          sourceSnapshot: message.sourceSnapshot,
           sourceFrameId: sender.frameId ?? 0,
         },
         { frameId: 0 }
@@ -372,18 +495,56 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     return;
   }
 
-  if (message.action === "remove-denied-click-handlers" && sender.tab?.id) {
+  if (message.action === "highlight-confirmation-source" && sender.tab?.id) {
+    if (!Number.isInteger(message.frameId) || message.frameId < 0) return;
+    runBestEffort(() =>
+      chrome.tabs.sendMessage(
+        sender.tab.id,
+        { action: "set-source-highlight", selector: String(message.selector ?? "") },
+        { frameId: message.frameId }
+      )
+    );
+    return;
+  }
+
+  if (message.action === "record-denial" && sender.tab?.id) {
+    const tabId = sender.tab.id;
     const frameId = Number.isInteger(message.frameId) && message.frameId >= 0
       ? message.frameId
       : 0;
-    runBestEffort(() =>
-      chrome.scripting.executeScript({
-        target: { tabId: sender.tab.id, frameIds: [frameId] },
+    const snapshot =
+      message.snapshot && typeof message.snapshot === "object" ? message.snapshot : {};
+    const fallbackRecord = {
+      ...snapshot,
+      uid: crypto.randomUUID(),
+      kind: "deny",
+      url: message.url,
+      frameUrl: snapshot.frameUrl || sender.url,
+    };
+    if (typeof message.selector !== "string" || !message.selector) {
+      recordModification(tabId, fallbackRecord);
+      return;
+    }
+
+    chrome.scripting
+      .executeScript({
+        target: { tabId, frameIds: [frameId] },
         world: "MAIN",
         func: removeDeniedClickHandlers,
-        args: [message.selector],
+        args: [message.selector, String(message.url ?? ""), message.removeHandlers === true],
       })
-    );
+      .then(([injection]) => injection?.result?.record)
+      .catch(() => null)
+      .then((record) => recordModification(tabId, record ?? fallbackRecord));
+    return;
+  }
+
+  if (message.action === "record-modification" || message.action === "forget-modification") {
+    const fromExtensionPage = !sender.tab && sender.id === chrome.runtime.id;
+    const tabId = sender.tab?.id ?? (fromExtensionPage ? message.tabId : undefined);
+    if (!Number.isInteger(tabId)) return;
+    if (message.action === "record-modification") recordModification(tabId, message.record);
+    else forgetModification(tabId, message.uid, message.kind);
     return;
   }
 
