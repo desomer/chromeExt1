@@ -32,6 +32,10 @@ Le bouton **Bloquer** crée une règle Chrome persistante pour le domaine choisi
 
 Après une mise à jour de l'extension, utiliser le bouton **Actualiser** sur `chrome://extensions` afin que Chrome prenne en compte les nouvelles permissions.
 
+## Réputation des domaines
+
+Dans l'onglet **Ressources**, **Vérifier les domaines** affiche quatre indicateurs pour les origines listées, dont l'âge RDAP. Les domaines enregistrés depuis moins d'un an apparaissent en rouge. La vérification est déclenchée à la demande et demande confirmation, car les URL complètes sont envoyées à Google Safe Browsing, les noms de domaine au résolveur DNS public de Google et au service RDAP, et les IP résolues à AbuseIPDB. Le flux OpenPhish est téléchargé pour une comparaison locale. Google Safe Browsing et AbuseIPDB nécessitent des clés configurables dans **Paramètres** ; elles sont conservées dans le stockage local de l'extension. AbuseIPDB ne juge pas directement un domaine : son score porte sur une seule IP résolue, potentiellement partagée par plusieurs sites. Une absence de signalement n'est pas une garantie de sécurité.
+
 ## Profondeur des iframes
 
 Le réglage **Profondeur maximale des iframes** bloque les frames dont le niveau dépasse la valeur choisie. La page principale est au niveau `0` :

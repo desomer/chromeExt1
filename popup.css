@@ -138,6 +138,13 @@ main {
   min-height: 0;
 }
 
+#settings-panel:not([hidden]) {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 5px;
+}
+
 .settings-panel h2,
 .elements-panel h2 {
   margin: 0 0 8px;
@@ -369,6 +376,54 @@ main {
   line-height: 1.4;
 }
 
+.reputation-tools {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 9px;
+}
+
+.reputation-tools button {
+  flex: none;
+}
+
+.reputation-tools p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.api-key-setting {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.api-key-setting input {
+  width: 190px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid #354861;
+  border-radius: 4px;
+}
+
+.api-key-setting input:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+#save-reputation-keys {
+  margin-bottom: 8px;
+}
+
 .results {
   flex: 1;
   min-height: 0;
@@ -411,6 +466,53 @@ main {
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.origin-reputation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.reputation-indicator {
+  display: inline-flex;
+  min-height: 18px;
+  align-items: center;
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.reputation-idle,
+.reputation-pending,
+.reputation-missing,
+.reputation-unavailable,
+.reputation-error {
+  color: var(--muted);
+  background: #202d40;
+}
+
+.reputation-clean {
+  color: #8de0ac;
+  background: #193c30;
+}
+
+.reputation-warning {
+  color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.reputation-flagged {
+  color: #ffaaa5;
+  background: var(--red-soft);
+}
+
+.reputation-recent {
+  color: #ffaaa5;
+  background: var(--red-soft);
 }
 
 .origin-actions {
@@ -604,6 +706,7 @@ main {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  padding-right: 5px;
 }
 
 .element-row {
@@ -630,6 +733,17 @@ main {
   color: var(--red);
   font-size: 10px;
   font-weight: 700;
+}
+
+.element-zero-area {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 5px;
+  color: var(--red);
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--red-soft);
+  border-radius: 3px;
 }
 
 .element-tag {

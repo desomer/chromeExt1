@@ -89,6 +89,15 @@
             Le blocage est global pour l’origine. Les requêtes déjà chargées ne sont pas annulées.
           </p>
 
+          <div class="reputation-tools">
+            <button id="check-reputation" class="refresh-button" type="button">
+              Vérifier les domaines
+            </button>
+            <p id="reputation-status" aria-live="polite">
+              Les indicateurs apparaîtront après vérification. Les URL seront envoyées aux services concernés.
+            </p>
+          </div>
+
           <div id="results" class="results"></div>
         </section>
       </section>
@@ -153,6 +162,23 @@
             <span>px²</span>
           </span>
         </label>
+
+        <h2>Réputation des domaines</h2>
+        <p class="blocking-note">
+          Les clés restent dans le stockage local de cette extension. Une vérification partage les URL avec Google Safe Browsing, les domaines avec le DNS public Google et les IP obtenues avec AbuseIPDB. Ne partagez pas une clé AbuseIPDB intégrée à une extension.
+        </p>
+        <label class="api-key-setting">
+          <span>Clé Google Safe Browsing</span>
+          <input id="safe-browsing-api-key" type="password" autocomplete="off" />
+        </label>
+        <label class="api-key-setting">
+          <span>Clé AbuseIPDB</span>
+          <input id="abuseipdb-api-key" type="password" autocomplete="off" />
+        </label>
+        <button id="save-reputation-keys" class="refresh-button" type="button">
+          Enregistrer les clés
+        </button>
+        <p id="reputation-keys-status" class="blocking-note" aria-live="polite"></p>
 
         <h2>Paramètres pour ce domaine</h2>
         <p class="blocking-note">

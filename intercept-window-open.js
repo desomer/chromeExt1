@@ -99,15 +99,15 @@
   });
 
   // Remembers the right-clicked element so the "Éléments" tab can inspect it on demand.
-  document.addEventListener(
+  Reflect.apply(originalAddEventListener, document, [
     "contextmenu",
     (event) => {
       if (event.target instanceof Element) {
         window[LISTENER_REGISTRY].contextTarget = event.target;
       }
     },
-    true
-  );
+    true,
+  ]);
 
   window.addEventListener(SETTINGS_EVENT, (event) => {
     confirmationEnabled = event.detail === true;

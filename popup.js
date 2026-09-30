@@ -429,6 +429,82 @@ function removeEventFromLastScan(targetIndex, eventType) {
   return { listenersRemoved, inlineHandlersRemoved };
 }
 
+function setPointerElementHighlight(targetIndex, enabled) {
+  const target = window[
+    Symbol.for("resource-origins.listener-registry")
+  ]?.lastScan?.[targetIndex];
+  if (!target) return;
+
+  const stateKey = Symbol.for("resource-origins.hover-highlight-states");
+  const states = (window[stateKey] ??= new Map());
+  const element = target instanceof Element ? target : document.documentElement;
+  if (!element) return;
+  let state = states.get(element);
+
+  const removeHighlight = (highlightState) => {
+    if (!highlightState) return;
+    clearTimeout(highlightState.timeoutId);
+    cancelAnimationFrame(highlightState.animationFrameId);
+    highlightState.overlay.remove();
+    states.delete(element);
+  };
+
+  if (!enabled) {
+    removeHighlight(state);
+    return;
+  }
+
+  removeHighlight(state);
+  if (target instanceof Element) {
+    const bounds = target.getBoundingClientRect();
+    const isOutsideViewport =
+      bounds.top < 0 ||
+      bounds.left < 0 ||
+      bounds.bottom > window.innerHeight ||
+      bounds.right > window.innerWidth;
+    if (isOutsideViewport && bounds.height < window.innerHeight) {
+      target.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    }
+  }
+
+  const overlay = document.createElement("div");
+  overlay.setAttribute("aria-hidden", "true");
+  for (const [property, value] of Object.entries({
+    position: "fixed",
+    zIndex: "2147483647",
+    pointerEvents: "none",
+    boxSizing: "border-box",
+    background: "rgba(255, 59, 48, 0.28)",
+    border: "3px solid #ff3b30",
+    borderRadius: "2px",
+    transition: "none",
+  })) {
+    overlay.style.setProperty(property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`), value, "important");
+  }
+  document.documentElement.append(overlay);
+
+  state = { overlay, timeoutId: null, animationFrameId: null };
+  states.set(element, state);
+
+  const updatePosition = () => {
+    if (target instanceof Element && !target.isConnected) {
+      removeHighlight(state);
+      return;
+    }
+    const bounds =
+      target instanceof Element
+        ? target.getBoundingClientRect()
+        : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    overlay.style.setProperty("left", `${bounds.left-20}px`, "important");
+    overlay.style.setProperty("top", `${bounds.top-20}px`, "important");
+    overlay.style.setProperty("width", `${bounds.width+40}px`, "important");
+    overlay.style.setProperty("height", `${bounds.height+40}px`, "important");
+    state.animationFrameId = requestAnimationFrame(updatePosition);
+  };
+  updatePosition();
+  state.timeoutId = window.setTimeout(() => removeHighlight(state), 3000);
+}
+
 function removeContextMenuEventsFromAllTargets() {
   const registry = window[Symbol.for("resource-origins.listener-registry")];
   const targets = new Set([window, document, ...document.querySelectorAll("*")]);
@@ -502,9 +578,17 @@ const typeLabels = {
   js: "JS",
   iframe: "Iframes",
 };
+const reputationProviders = [
+  ["safeBrowsing", "Safe Browsing"],
+  ["abuseIpDb", "AbuseIPDB"],
+  ["openPhish", "OpenPhish"],
+  ["rdap", "RDAP"],
+];
 
 let pageData = null;
 let blockingRules = new Map();
+let domainReputations = new Map();
+let reputationRequestId = 0;
 let elementsScanned = false;
 let activeTabId = null;
 
@@ -589,6 +673,16 @@ function createTypeBadge(type, count) {
   return badge;
 }
 
+function createReputationIndicator(provider, result) {
+  const [key, label] = provider;
+  const indicator = document.createElement("span");
+  indicator.className = `reputation-indicator reputation-${result.state}`;
+  indicator.textContent = `${label} · ${result.label}`;
+  indicator.title = result.title || `${label}: ${result.label}`;
+  indicator.dataset.provider = key;
+  return indicator;
+}
+
 function renderResults(query = "") {
   const results = document.querySelector("#results");
   results.replaceChildren();
@@ -641,7 +735,18 @@ function renderResults(query = "") {
     for (const type of RESOURCE_TYPES) {
       if (group[type].length) badges.append(createTypeBadge(type, group[type].length));
     }
-    heading.append(hostname, badges);
+    const reputationBadges = document.createElement("span");
+    reputationBadges.className = "origin-reputation";
+    const resultsByProvider = domainReputations.get(groupHostname) ?? {};
+    for (const provider of reputationProviders) {
+      const result = resultsByProvider[provider[0]] ?? {
+        state: "idle",
+        label: "À vérifier",
+        title: "Lancez la vérification pour consulter cette source.",
+      };
+      reputationBadges.append(createReputationIndicator(provider, result));
+    }
+    heading.append(hostname, badges, reputationBadges);
 
     const actions = document.createElement("span");
     actions.className = "origin-actions";
@@ -693,6 +798,332 @@ function renderResults(query = "") {
   }
 }
 
+function setDomainReputation(hostname, provider, result, requestId) {
+  if (requestId !== reputationRequestId) return;
+  const results = domainReputations.get(hostname) ?? {};
+  results[provider] = result;
+  domainReputations.set(hostname, results);
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function checkGoogleSafeBrowsing(urlsByHostname, apiKey, requestId) {
+  if (!apiKey) return;
+
+  const entries = [...urlsByHostname.entries()].flatMap(([hostname, urls]) =>
+    urls.map((url) => ({ hostname, url }))
+  );
+  const matches = new Set();
+  const failures = new Set();
+
+  for (let offset = 0; offset < entries.length; offset += 500) {
+    const batch = entries.slice(offset, offset + 500);
+    const endpoint = new URL("https://safebrowsing.googleapis.com/v4/threatMatches:find");
+    endpoint.searchParams.set("key", apiKey);
+
+    try {
+      const response = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client: {
+            clientId: "resource-origins",
+            clientVersion: chrome.runtime.getManifest().version,
+          },
+          threatInfo: {
+            threatTypes: ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE"],
+            platformTypes: ["ANY_PLATFORM"],
+            threatEntryTypes: ["URL"],
+            threatEntries: batch.map(({ url }) => ({ url })),
+          },
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const result = await response.json();
+      for (const match of result.matches ?? []) {
+        const hostname = new URL(match.threat.url).hostname;
+        matches.add(hostname);
+      }
+    } catch {
+      for (const entry of batch) failures.add(entry.hostname);
+    }
+  }
+
+  for (const hostname of urlsByHostname.keys()) {
+    const isFlagged = matches.has(hostname);
+    const failed = failures.has(hostname);
+    setDomainReputation(
+      hostname,
+      "safeBrowsing",
+      isFlagged
+        ? { state: "flagged", label: "Signalé", title: "Au moins une URL du domaine correspond à une menace Safe Browsing." }
+        : failed
+          ? { state: "error", label: "Erreur API", title: "La requête Google Safe Browsing a échoué." }
+          : { state: "clean", label: "Aucun signalement", title: "Aucune URL vérifiée n’a correspondu aux listes Safe Browsing." },
+      requestId
+    );
+  }
+}
+
+async function checkOpenPhish(hostnames, requestId) {
+  try {
+    const response = await fetchWithTimeout("https://openphish.com/feed.txt");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const feed = await response.text();
+    const flaggedHosts = new Set();
+    for (const line of feed.split(/\r?\n/)) {
+      try {
+        flaggedHosts.add(new URL(line.trim()).hostname.toLowerCase());
+      } catch {
+        // Ignore malformed feed lines.
+      }
+    }
+
+    for (const hostname of hostnames) {
+      const isFlagged = flaggedHosts.has(hostname.toLowerCase());
+      setDomainReputation(
+        hostname,
+        "openPhish",
+        isFlagged
+          ? { state: "flagged", label: "Présent", title: "Le domaine figure dans le flux public OpenPhish." }
+          : { state: "clean", label: "Absent du flux", title: "Le domaine ne figure pas dans le flux public OpenPhish téléchargé." },
+        requestId
+      );
+    }
+  } catch {
+    for (const hostname of hostnames) {
+      setDomainReputation(
+        hostname,
+        "openPhish",
+        { state: "error", label: "Indisponible", title: "Impossible de télécharger le flux OpenPhish." },
+        requestId
+      );
+    }
+  }
+}
+
+function formatDomainAge(ageInDays) {
+  if (ageInDays < 30) return `${ageInDays} j`;
+  if (ageInDays < 365) return `${Math.floor(ageInDays / 30)} mois`;
+  const years = Math.floor(ageInDays / 365);
+  const months = Math.floor((ageInDays % 365) / 30);
+  return months ? `${years} an${years > 1 ? "s" : ""} ${months} mois` : `${years} an${years > 1 ? "s" : ""}`;
+}
+
+async function checkRdap(hostnames, requestId) {
+  const hostsByDomain = new Map();
+  for (const hostname of hostnames) {
+    const domain = getRootDomain(hostname);
+    const hosts = hostsByDomain.get(domain) ?? [];
+    hosts.push(hostname);
+    hostsByDomain.set(domain, hosts);
+  }
+
+  const domains = [...hostsByDomain.keys()];
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(3, domains.length) }, async () => {
+    while (nextIndex < domains.length) {
+      const domain = domains[nextIndex++];
+      const hosts = hostsByDomain.get(domain);
+      if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(domain) || domain.includes(":")) {
+        for (const hostname of hosts) {
+          setDomainReputation(
+            hostname,
+            "rdap",
+            { state: "unavailable", label: "IP", title: "RDAP domaine ne fournit pas l’âge des adresses IP." },
+            requestId
+          );
+        }
+        continue;
+      }
+
+      try {
+        const endpoint = `https://rdap.org/domain/${encodeURIComponent(domain)}`;
+        const response = await fetchWithTimeout(endpoint, {
+          headers: { Accept: "application/rdap+json, application/json" },
+        });
+        if (!response.ok) throw new Error(`RDAP HTTP ${response.status}`);
+        const result = await response.json();
+        const registrationEvent = result.events?.find(
+          (event) => event.eventAction?.toLowerCase() === "registration"
+        );
+        const registrationDate = registrationEvent?.eventDate
+          ? new Date(registrationEvent.eventDate)
+          : null;
+        if (!registrationDate || Number.isNaN(registrationDate.getTime())) {
+          throw new Error("RDAP registration date unavailable");
+        }
+
+        const ageInDays = Math.max(
+          0,
+          Math.floor((Date.now() - registrationDate.getTime()) / 86400000)
+        );
+        const isRecent = ageInDays < 365;
+        const ageLabel = formatDomainAge(ageInDays);
+        const title = `Date d’enregistrement RDAP : ${registrationDate.toLocaleDateString("fr-FR")}. Âge : ${ageLabel}.`;
+        for (const hostname of hosts) {
+          setDomainReputation(
+            hostname,
+            "rdap",
+            { state: isRecent ? "recent" : "clean", label: ageLabel, title },
+            requestId
+          );
+        }
+      } catch {
+        for (const hostname of hosts) {
+          setDomainReputation(
+            hostname,
+            "rdap",
+            { state: "unavailable", label: "Indisponible", title: "Date d’enregistrement RDAP indisponible pour ce domaine." },
+            requestId
+          );
+        }
+      }
+    }
+  });
+  await Promise.all(workers);
+}
+
+async function resolveDomainIp(hostname) {
+  const normalizedHost = hostname.replace(/^\[|\]$/g, "");
+  if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(normalizedHost) || normalizedHost.includes(":")) {
+    return normalizedHost;
+  }
+
+  for (const type of ["A", "AAAA"]) {
+    const endpoint = new URL("https://dns.google/resolve");
+    endpoint.searchParams.set("name", normalizedHost);
+    endpoint.searchParams.set("type", type);
+    const response = await fetchWithTimeout(endpoint, {
+      headers: { Accept: "application/dns-json" },
+    });
+    if (!response.ok) throw new Error(`DNS HTTP ${response.status}`);
+    const result = await response.json();
+    const answer = result.Answer?.find((record) => record.type === (type === "A" ? 1 : 28));
+    if (answer) return answer.data;
+  }
+  return null;
+}
+
+async function checkAbuseIpDb(hostnames, apiKey, requestId) {
+  if (!apiKey) return;
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(3, hostnames.length) }, async () => {
+    while (nextIndex < hostnames.length) {
+      const hostname = hostnames[nextIndex++];
+      try {
+        const ipAddress = await resolveDomainIp(hostname);
+        if (!ipAddress) {
+          setDomainReputation(
+            hostname,
+            "abuseIpDb",
+            { state: "unavailable", label: "IP introuvable", title: "Aucune adresse A/AAAA n’a été résolue." },
+            requestId
+          );
+          continue;
+        }
+
+        const endpoint = new URL("https://api.abuseipdb.com/api/v2/check");
+        endpoint.searchParams.set("ipAddress", ipAddress);
+        endpoint.searchParams.set("maxAgeInDays", "30");
+        const response = await fetchWithTimeout(endpoint, {
+          headers: { Key: apiKey, Accept: "application/json" },
+        });
+        if (!response.ok) throw new Error(`AbuseIPDB HTTP ${response.status}`);
+        const result = await response.json();
+        const score = result.data?.abuseConfidenceScore;
+        if (!Number.isFinite(score)) throw new Error("AbuseIPDB returned no score");
+
+        setDomainReputation(
+          hostname,
+          "abuseIpDb",
+          {
+            state: score >= 25 ? "flagged" : score > 0 ? "warning" : "clean",
+            label: `${score}%`,
+            title: `Score AbuseIPDB de l’IP ${ipAddress} : ${score}% sur les 30 derniers jours. Ce score concerne l’IP, pas le domaine seul.`,
+          },
+          requestId
+        );
+      } catch {
+        setDomainReputation(
+          hostname,
+          "abuseIpDb",
+          { state: "error", label: "Erreur API", title: "La résolution DNS ou la requête AbuseIPDB a échoué." },
+          requestId
+        );
+      }
+    }
+  });
+  await Promise.all(workers);
+}
+
+async function checkDomainReputations() {
+  if (!pageData || !pageData.orderedResources.length) return;
+  const urlsByHostname = new Map();
+  for (const resource of pageData.orderedResources) {
+    const hostname = new URL(resource.url).hostname;
+    const urls = urlsByHostname.get(hostname) ?? new Set();
+    urls.add(resource.url);
+    urlsByHostname.set(hostname, urls);
+  }
+  const hostnames = [...urlsByHostname.keys()];
+  const accepted = window.confirm(
+    `Vérifier ${hostnames.length} domaine(s) ? Les URL complètes seront envoyées à Google Safe Browsing, les domaines au DNS public Google et à RDAP, et les IP résolues à AbuseIPDB. OpenPhish sera consulté pour comparer son flux public.`
+  );
+  if (!accepted) return;
+
+  const button = document.querySelector("#check-reputation");
+  const status = document.querySelector("#reputation-status");
+  button.disabled = true;
+  status.textContent = "Vérifications en cours…";
+  const requestId = ++reputationRequestId;
+  const { safeBrowsingApiKey = "", abuseIpDbApiKey = "" } = await chrome.storage.local.get({
+    safeBrowsingApiKey: "",
+    abuseIpDbApiKey: "",
+  });
+  domainReputations = new Map(
+    hostnames.map((hostname) => [
+      hostname,
+      {
+        safeBrowsing: safeBrowsingApiKey
+          ? { state: "pending", label: "Analyse…" }
+          : { state: "missing", label: "Clé requise", title: "Ajoutez la clé Google Safe Browsing dans Paramètres." },
+        abuseIpDb: abuseIpDbApiKey
+          ? { state: "pending", label: "Analyse…" }
+          : { state: "missing", label: "Clé requise", title: "Ajoutez la clé AbuseIPDB dans Paramètres." },
+        openPhish: { state: "pending", label: "Analyse…" },
+        rdap: { state: "pending", label: "Âge…" },
+      },
+    ])
+  );
+  renderResults(document.querySelector("#search").value);
+
+  await Promise.all([
+    checkGoogleSafeBrowsing(
+      new Map([...urlsByHostname].map(([hostname, urls]) => [hostname, [...urls]])),
+      safeBrowsingApiKey,
+      requestId
+    ),
+    checkAbuseIpDb(hostnames, abuseIpDbApiKey, requestId),
+    checkOpenPhish(hostnames, requestId),
+    checkRdap(hostnames, requestId),
+  ]);
+
+  if (requestId === reputationRequestId) {
+    renderResults(document.querySelector("#search").value);
+    status.textContent = "Vérification terminée. Un résultat positif indique un signalement, pas une décision automatique de blocage.";
+  }
+  button.disabled = false;
+}
+
 function updateSummary() {
   const total = RESOURCE_TYPES.reduce(
     (sum, type) => sum + pageData.resources[type].length,
@@ -742,6 +1173,8 @@ function renderPointerElements(scan) {
   for (const element of scan.elements) {
     const row = document.createElement("article");
     row.className = "element-row";
+    row.addEventListener("mouseenter", () => highlightPointerElement(element, true));
+    row.addEventListener("mouseleave", () => highlightPointerElement(element, false));
 
     const heading = document.createElement("div");
     heading.className = "element-heading";
@@ -752,14 +1185,19 @@ function renderPointerElements(scan) {
     const size = document.createElement("span");
     size.textContent = `${element.width} × ${element.height} px · ${element.area} px²`;
     heading.append(tag, size);
+    row.append(heading);
+    if (element.area === 0) {
+      const zeroArea = document.createElement("span");
+      zeroArea.className = "element-zero-area";
+      zeroArea.textContent = "Surface nulle";
+      row.append(zeroArea);
+    }
 
     if (element.widthRemoved) {
       const widthState = document.createElement("span");
       widthState.className = "element-width-removed";
       widthState.textContent = "Div overlay neutralisée";
-      row.append(heading, widthState);
-    } else {
-      row.append(heading);
+      row.append(widthState);
     }
 
     const frame = document.createElement("span");
@@ -808,6 +1246,17 @@ function renderPointerElements(scan) {
     row.append(events);
     results.append(row);
   }
+}
+
+function highlightPointerElement(element, enabled) {
+  if (activeTabId == null) return;
+
+  chrome.scripting.executeScript({
+    target: { tabId: activeTabId, frameIds: [element.frameId] },
+    world: "MAIN",
+    func: setPointerElementHighlight,
+    args: [element.targetIndex, enabled],
+  }).catch(() => {});
 }
 
 async function removeSingleEvent(element, eventType, button) {
@@ -883,6 +1332,7 @@ async function scanPointerElements() {
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    activeTabId = tab.id;
     const { elementMinimumArea } = await chrome.storage.local.get({
       elementMinimumArea: 100000,
     });
@@ -1064,6 +1514,7 @@ async function scanActiveTab() {
       resources,
       orderedResources,
     };
+    domainReputations = new Map();
     activeTabId = tab.id;
     const pageUrl = new URL(pageData.pageUrl);
     document.querySelector("#page-host").textContent = pageUrl.hostname;
@@ -1094,6 +1545,8 @@ async function scanActiveTab() {
 document.querySelector("#search").addEventListener("input", (event) => {
   renderResults(event.target.value);
 });
+
+document.querySelector("#check-reputation").addEventListener("click", checkDomainReputations);
 
 const headerAction = document.querySelector("#refresh");
 const domainSettingsAction = document.querySelector("#open-domain-settings");
@@ -1254,6 +1707,23 @@ elementMinArea.addEventListener("change", () => {
   elementMinArea.value = String(area);
   elementsScanned = false;
   chrome.storage.local.set({ elementMinimumArea: area });
+});
+
+const safeBrowsingApiKey = document.querySelector("#safe-browsing-api-key");
+const abuseIpDbApiKey = document.querySelector("#abuseipdb-api-key");
+const reputationKeysStatus = document.querySelector("#reputation-keys-status");
+chrome.storage.local
+  .get({ safeBrowsingApiKey: "", abuseIpDbApiKey: "" })
+  .then((keys) => {
+    safeBrowsingApiKey.value = keys.safeBrowsingApiKey;
+    abuseIpDbApiKey.value = keys.abuseIpDbApiKey;
+  });
+document.querySelector("#save-reputation-keys").addEventListener("click", async () => {
+  await chrome.storage.local.set({
+    safeBrowsingApiKey: safeBrowsingApiKey.value.trim(),
+    abuseIpDbApiKey: abuseIpDbApiKey.value.trim(),
+  });
+  reputationKeysStatus.textContent = "Clés enregistrées dans le stockage local de l’extension.";
 });
 
 const tabButtons = [...document.querySelectorAll('[role="tab"]')];
