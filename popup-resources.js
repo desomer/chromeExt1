@@ -375,19 +375,21 @@ function renderResults(query = "") {
       toggleBlockedOrigin(group.origin, blockButton);
     });
 
-    const copyButton = document.createElement("button");
-    copyButton.className = "copy-button";
-    copyButton.type = "button";
-    copyButton.textContent = "Copier";
-    copyButton.title = `Copier ${group.origin}`;
-    copyButton.addEventListener("click", async (event) => {
+    const searchButton = document.createElement("button");
+    searchButton.className = "search-button";
+    searchButton.type = "button";
+    searchButton.textContent = "Search";
+    searchButton.title = `Rechercher ${groupHostname}`;
+    searchButton.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      await navigator.clipboard.writeText(group.origin);
-      copyButton.textContent = "Copié";
-      window.setTimeout(() => (copyButton.textContent = "Copier"), 1200);
+      const dialog = document.querySelector("#search-dialog");
+      dialog.dataset.hostname = groupHostname;
+      document.querySelector("#search-dialog-hostname").textContent = groupHostname;
+      dialog.showModal();
     });
-    actions.append(blockButton, copyButton);
+
+    actions.append(blockButton, searchButton);
     summary.append(heading, actions);
 
     const resourceList = document.createElement("div");
@@ -438,6 +440,22 @@ function renderResults(query = "") {
     results.append(details);
   }
 }
+
+document.querySelector("#search-dialog").addEventListener("click", (event) => {
+  const provider = event.target.closest("[data-search-provider]")?.dataset.searchProvider;
+  if (!provider) return;
+
+  const dialog = event.currentTarget;
+  const hostname = encodeURIComponent(dialog.dataset.hostname);
+  const urls = {
+    google: `https://www.google.com/search?q=${hostname}`,
+    scamadviser: `https://www.scamadviser.com/check-website/${hostname}`,
+    urlvoid: `https://www.urlvoid.com/scan/${hostname}/`,
+    virustotal: `https://www.virustotal.com/gui/domain/${hostname}`,
+  };
+  chrome.tabs.create({ url: urls[provider] });
+  dialog.close();
+});
 
 function highlightIframeResource(resource, enabled) {
   if (activeTabId == null) return;
@@ -729,10 +747,6 @@ async function checkDomainReputations() {
     urlsByHostname.set(hostname, urls);
   }
   const hostnames = [...urlsByHostname.keys()];
-  const accepted = window.confirm(
-    `Vérifier ${hostnames.length} domaine(s) ? Les URL complètes seront envoyées à Google Safe Browsing, les domaines au DNS public Google et à RDAP, et les IP résolues à AbuseIPDB. OpenPhish sera consulté pour comparer son flux public. EasyList sera évaluée localement.`
-  );
-  if (!accepted) return;
 
   const button = document.querySelector("#check-reputation");
   const status = document.querySelector("#reputation-status");

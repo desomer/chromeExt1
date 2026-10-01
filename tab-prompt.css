@@ -16,9 +16,11 @@ main {
   min-height: 140px;
   padding: 10px;
   color: #e6edf8;
-  background: #111c2e;
-  border-top: 4px solid #62a8ff;
-  box-shadow: inset 0 0 0 1px #26364d;
+  background: linear-gradient(135deg, #203b4d, #111c2e 65%, #263d40);
+  border: 1px solid rgba(151, 190, 207, 0.35);
+  border-top: 3px solid #62a8ff;
+  border-radius: 8px;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
 }
 
 .eyebrow {
@@ -78,8 +80,9 @@ main {
   color: #b5c4d8;
   font-size: 10px;
   font-weight: 700;
-  background: #202d40;
-  border-radius: 3px;
+  background: linear-gradient(135deg, rgba(48, 87, 112, 0.52), rgba(26, 50, 69, 0.78));
+  border: 1px solid rgba(151, 190, 207, 0.19);
+  border-radius: 6px;
 }
 
 #interception-mode,
@@ -130,9 +133,11 @@ main {
 #global-listeners {
   max-height: 110px;
   margin-top: 8px;
-  padding: 6px;
+  padding: 8px;
   overflow-y: auto;
-  border: 1px solid #3a4b64;
+  background: linear-gradient(135deg, rgba(48, 87, 112, 0.32), rgba(26, 50, 69, 0.72));
+  border: 1px solid rgba(151, 190, 207, 0.35);
+  border-radius: 8px;
 }
 
 #global-listeners legend {
@@ -189,11 +194,15 @@ main {
   display: -webkit-box;
   overflow: hidden;
   margin-top: 7px;
+  padding: 8px 10px;
   color: #94a5bd;
   font-family: Consolas, monospace;
   font-size: 11px;
   line-height: 1.4;
   overflow-wrap: anywhere;
+  background: linear-gradient(135deg, rgba(48, 87, 112, 0.42), rgba(26, 50, 69, 0.72) 60%, rgba(75, 96, 91, 0.28));
+  border: 1px solid rgba(151, 190, 207, 0.19);
+  border-radius: 8px;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
@@ -203,8 +212,8 @@ main {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 20px;
+  gap: 6px;
+  margin-top: 12px;
 }
 
 button[hidden] {
@@ -213,14 +222,24 @@ button[hidden] {
 
 
 button {
-  min-height: 34px;
-  padding: 0 13px;
+  min-height: 30px;
+  padding: 3px 10px;
   font: inherit;
   font-size: 12px;
   font-weight: 600;
-  border: 1px solid #62a8ff;
-  border-radius: 4px;
+  border: 1px solid rgba(151, 190, 207, 0.42);
+  border-radius: 7px;
   cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: #62a8ff;
+  filter: brightness(1.15);
+}
+
+button:focus-visible {
+  outline: 2px solid #62a8ff;
+  outline-offset: 2px;
 }
 
 button:disabled {
@@ -230,22 +249,18 @@ button:disabled {
 
 .primary {
   color: white;
-  background: #2878d0;
+  background: linear-gradient(135deg, #2878d0, #275b87);
+  border-color: #62a8ff;
 }
 
 .secondary {
   color: #a8cfff;
-  background: #17243a;
+  background: linear-gradient(135deg, rgba(98, 168, 255, 0.22), rgba(114, 213, 238, 0.09));
 }
 
-#deny-disable {
-  color: #ffffff;
-  background:#ff231b;
-  border-color: white;
-}
-
+#deny-disable,
 #deny {
-  color: #ffffff;
-  background:#ff231b;
-  border-color: white;
+  color: #ffb8b4;
+  background: linear-gradient(135deg, rgba(158, 46, 53, 0.45), rgba(64, 37, 44, 0.9));
+  border-color: rgba(249, 141, 141, 0.65);
 }

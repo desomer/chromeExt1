@@ -118,21 +118,25 @@
     const style = document.createElement("style");
     style.textContent = `
       :host { all: initial; }
-      .panel { box-sizing:border-box; width:min(440px,calc(100vw - 32px)); max-height:70vh; overflow:hidden; color:#edf2f7; background:#17212b; border:1px solid #53616e; border-top:3px solid #ffbf69; border-radius:5px; box-shadow:0 12px 38px rgba(0,0,0,.38); font:13px/1.45 system-ui,sans-serif; }
-      header { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid #394754; }
-      h2 { margin:0; font-size:14px; font-weight:700; }
+      .panel { box-sizing:border-box; display:flex; flex-direction:column; width:min(440px,calc(100vw - 32px)); max-height:70vh; overflow:hidden; color:#e6edf8; background:linear-gradient(135deg,#203b4d,#111c2e 65%,#263d40); border:1px solid rgba(151,190,207,.35); border-top:3px solid #ffbf69; border-radius:8px; box-shadow:0 18px 40px rgba(0,0,0,.45); font:13px/1.45 "Segoe UI Variable",Aptos,sans-serif; }
+      header { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:12px 14px; border-bottom:1px solid rgba(151,190,207,.19); }
+      h2 { flex:1 1 140px; margin:0; font-size:14px; font-weight:700; }
       .count { flex:none; color:#ffcf87; font-size:11px; }
-      button { width:28px; height:28px; flex:none; padding:0; color:#edf2f7; background:transparent; border:0; border-radius:3px; cursor:pointer; font:20px/1 system-ui,sans-serif; }
-      button:hover { background:#344351; }
-      .refresh-page-button { width:auto; padding:4px 8px; font:600 11px/1.3 system-ui,sans-serif; }
-      ul { display:grid; gap:1px; max-height:calc(70vh - 55px); margin:0; padding:0; overflow:auto; list-style:none; }
-      li { min-width:0; padding:10px 14px; border-bottom:1px solid #303d49; }
+      button { width:26px; height:26px; flex:none; padding:0; color:#e6edf8; background:rgba(98,168,255,.12); border:1px solid rgba(151,190,207,.35); border-radius:7px; cursor:pointer; font:20px/1 "Segoe UI Variable",Aptos,sans-serif; }
+      button:hover { background:rgba(98,168,255,.28); border-color:#62a8ff; }
+      button:focus-visible { outline:2px solid #62a8ff; outline-offset:2px; }
+      .refresh-page-button { width:auto; padding:3px 9px; background:linear-gradient(135deg,rgba(98,168,255,.22),rgba(114,213,238,.09)); font:600 11px/1.3 "Segoe UI Variable",Aptos,sans-serif; }
+      ul { min-height:0; margin:0; padding:10px 10px 2px; overflow:auto; list-style:none; }
+      ul::-webkit-scrollbar { width:10px; }
+      ul::-webkit-scrollbar-track { background:rgba(12,25,38,.35); border-radius:10px; }
+      ul::-webkit-scrollbar-thumb { background:linear-gradient(135deg,rgba(98,168,255,.7),rgba(114,213,238,.5)); border:2px solid rgba(12,25,38,.65); border-radius:10px; }
+      li { min-width:0; margin-bottom:8px; padding:10px 12px; background:linear-gradient(135deg,rgba(48,87,112,.52),rgba(26,50,69,.78) 52%,rgba(75,96,91,.34)); border:1px solid rgba(151,190,207,.19); border-radius:8px; }
       .resource { display:block; overflow-wrap:anywhere; color:#f3f5f7; font:12px/1.4 ui-monospace,monospace; }
       .filter { display:block; margin-top:4px; overflow-wrap:anywhere; color:#ffcf87; font-size:11px; }
-      .block-domain-button { width:auto; height:auto; margin-top:7px; padding:4px 8px; color:#ffcf87; background:#352b1e; font:600 11px/1.3 system-ui,sans-serif; }
-      .block-domain-button:hover { background:#4b3822; }
+      .block-domain-button { width:auto; height:26px; margin-top:8px; padding:3px 9px; color:#ffcf87; background:linear-gradient(135deg,rgba(240,189,104,.19),rgba(98,168,255,.08)); border-color:rgba(240,189,104,.35); font:600 11px/1.3 "Segoe UI Variable",Aptos,sans-serif; }
+      .block-domain-button:hover { background:rgba(240,189,104,.3); border-color:#ffcf87; }
       button:disabled { cursor:default; opacity:.7; }
-      .overflow { padding:8px 14px; color:#b8c4ce; font-size:11px; }
+      .overflow { color:#b8c4ce; font-size:11px; }
       @media (max-width:480px) { .panel { width:calc(100vw - 24px); } }
     `;
     panel = document.createElement("section");

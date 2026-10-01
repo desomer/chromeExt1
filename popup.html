@@ -9,7 +9,7 @@
   <body>
     <header>
       <div>
-        <p class="eyebrow">Resource Origins</p>
+        <p class="eyebrow">Surf Gard v1.0</p>
       </div>
       <button
         id="open-domain-settings"
@@ -43,7 +43,7 @@
         aria-selected="true"
         aria-controls="resources-panel"
       >
-        Ressources
+        Domaines
       </button>
       <button
         id="elements-tab"
@@ -95,7 +95,12 @@
               <strong id="page-host"></strong>
               <span id="page-url"></span>
             </div>
-            <strong id="resource-total"></strong>
+            <div class="summary-actions">
+              <strong id="resource-total"></strong>
+              <button id="check-reputation" class="refresh-button" type="button">
+                Check
+              </button>
+            </div>
           </div>
 
           <div id="type-counts" class="type-counts" aria-label="Totaux par type"></div>
@@ -110,9 +115,6 @@
           </p>
 
           <div class="reputation-tools">
-            <button id="check-reputation" class="refresh-button" type="button">
-              Vérifier les domaines
-            </button>
             <p id="reputation-status" aria-live="polite">
               Les indicateurs apparaîtront après vérification. Les URL seront envoyées aux services concernés.
             </p>
@@ -305,6 +307,20 @@
         <div id="modified-results" class="elements-results"></div>
       </section>
     </main>
+
+    <dialog id="search-dialog" aria-labelledby="search-dialog-title">
+      <h2 id="search-dialog-title">Rechercher un domaine</h2>
+      <p id="search-dialog-hostname"></p>
+      <div class="search-providers">
+        <button type="button" data-search-provider="google">Google</button>
+        <button type="button" data-search-provider="scamadviser">ScamAdviser</button>
+        <button type="button" data-search-provider="urlvoid">URLVoid</button>
+        <button type="button" data-search-provider="virustotal">VirusTotal</button>
+      </div>
+      <form method="dialog">
+        <button class="refresh-button" type="submit">Annuler</button>
+      </form>
+    </dialog>
 
     <script src="resource-scanner.js"></script>
     <script src="popup-injected.js"></script>
