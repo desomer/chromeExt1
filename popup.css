@@ -592,6 +592,28 @@ main {
   white-space: nowrap;
 }
 
+.easylist-indicator {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  align-items: center;
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.easylist-indicator.is-match {
+  color: #ffcf87;
+  background: #48371c;
+}
+
+.easylist-indicator.is-clear {
+  color: var(--muted);
+  background: #202d40;
+}
+
 .resource-row-iframe {
   cursor: crosshair;
 }

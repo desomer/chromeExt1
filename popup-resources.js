@@ -72,6 +72,9 @@ let pageData = null;
 let blockingRules = new Map();
 let blockedOriginTimestamps = {};
 let domainReputations = new Map();
+let easyListResourceResults = new Map();
+let easyListEvaluationPending = false;
+let easyListEvaluationUnavailable = false;
 let reputationRequestId = 0;
 let elementsScanned = false;
 let activeTabId = null;
@@ -119,6 +122,15 @@ async function loadBlockingRules() {
   );
 }
 
+function isHostnameBlocked(hostname) {
+  const normalizedHostname = hostname.toLowerCase();
+  return [...blockingRules.keys()].some(
+    (blockedHostname) =>
+      normalizedHostname === blockedHostname ||
+      normalizedHostname.endsWith(`.${blockedHostname}`)
+  );
+}
+
 async function toggleBlockedOrigin(origin, button) {
   const hostname = new URL(origin).hostname;
   const existingRule = blockingRules.get(hostname);
@@ -148,6 +160,7 @@ async function toggleBlockedOrigin(origin, button) {
     }
     await chrome.storage.local.set({ blockedOriginTimestamps });
 
+    updateSummary();
     renderResults(document.querySelector("#search").value);
     if (activeTabId != null) {
       chrome.runtime.sendMessage({ action: "refresh-blocked-badge", tabId: activeTabId });
@@ -179,6 +192,37 @@ function formatBlockDate(timestamp) {
   return Number.isFinite(timestamp)
     ? blockDateFormatter.format(new Date(timestamp))
     : "Date inconnue";
+}
+
+function resetEasyListEvaluation() {
+  easyListResourceResults = new Map();
+  easyListEvaluationPending = false;
+  easyListEvaluationUnavailable = false;
+}
+
+async function evaluateResourcesWithEasyList() {
+  easyListEvaluationPending = true;
+  easyListEvaluationUnavailable = false;
+  renderResults(document.querySelector("#search").value);
+  try {
+    const list = await EasyListEvaluator.loadList();
+    const evaluation = EasyListEvaluator.evaluate(
+      pageData.orderedResources,
+      pageData.pageUrl,
+      list.text,
+      getRootDomain
+    );
+    if (!evaluation.filterCount) throw new Error("No supported network filters");
+    easyListResourceResults = evaluation.results;
+    return { ok: true, evaluation, stale: list.stale };
+  } catch {
+    easyListResourceResults = new Map();
+    easyListEvaluationUnavailable = true;
+    return { ok: false };
+  } finally {
+    easyListEvaluationPending = false;
+    renderResults(document.querySelector("#search").value);
+  }
 }
 
 function renderResults(query = "") {
@@ -216,9 +260,22 @@ function renderResults(query = "") {
     return;
   }
 
+  const easyListByOrigin = new Map();
+  for (const resource of pageData.orderedResources) {
+    const origin = new URL(resource.url).origin;
+    const status = easyListByOrigin.get(origin) ?? { total: 0, evaluated: 0, matched: 0 };
+    status.total += 1;
+    const result = easyListResourceResults.get(`${resource.type}\u0000${resource.url}`);
+    if (result) {
+      status.evaluated += 1;
+      if (result.matched) status.matched += 1;
+    }
+    easyListByOrigin.set(origin, status);
+  }
+
   for (const group of groups) {
     const groupHostname = new URL(group.origin).hostname;
-    const isBlocked = blockingRules.has(groupHostname);
+    const isBlocked = isHostnameBlocked(groupHostname);
     const details = document.createElement("details");
     details.className = `origin-group${isBlocked ? " origin-blocked" : ""}`;
 
@@ -254,6 +311,43 @@ function renderResults(query = "") {
         title: "Lancez la vérification pour consulter cette source.",
       };
       reputationBadges.append(createReputationIndicator(provider, result));
+      if (provider[0] === "openPhish") {
+        const easyListStatus = easyListByOrigin.get(group.origin);
+        const evaluated = easyListStatus?.total > 0 && easyListStatus.evaluated === easyListStatus.total;
+        const matchCount = easyListStatus?.matched ?? 0;
+        const easyListResult = easyListEvaluationPending
+          ? {
+            state: "pending",
+            label: "Évaluation…",
+            title: "Comparaison locale avec EasyList en cours.",
+          }
+          : easyListEvaluationUnavailable
+            ? {
+              state: "error",
+              label: "Indisponible",
+              title: "EasyList est inaccessible ou ne contient aucun filtre compatible.",
+            }
+            : evaluated
+              ? matchCount
+                ? {
+                  state: "warning",
+                  label: `${matchCount} correspondance${matchCount > 1 ? "s" : ""}`,
+                  title: `${matchCount} ressource(s) sur ${easyListStatus.total} de cette origine correspondent à un filtre réseau EasyList pris en charge. Aucun blocage n’est appliqué.`,
+                }
+                : {
+                  state: "clean",
+                  label: "Aucune correspondance",
+                  title: `Aucune des ${easyListStatus.total} ressource(s) de cette origine ne correspond à un filtre réseau EasyList pris en charge.`,
+                }
+              : {
+                state: "idle",
+                label: "À vérifier",
+                title: "Vérifiez les domaines pour comparer cette origine avec EasyList.",
+              };
+        reputationBadges.append(
+          createReputationIndicator(["easyList", "EasyList"], easyListResult)
+        );
+      }
     }
     heading.append(hostname);
     if (isBlocked) {
@@ -318,6 +412,18 @@ function renderResults(query = "") {
         : "Domaine demandeur indisponible";
       requester.title = requesterDomains.join("\n") || requester.textContent;
       resourceInfo.append(requester);
+      const easyListResult = easyListResourceResults.get(`${resource.type}\u0000${resource.url}`);
+      if (easyListResult) {
+        const indicator = document.createElement("span");
+        indicator.className = `easylist-indicator ${easyListResult.matched ? "is-match" : "is-clear"}`;
+        indicator.textContent = easyListResult.matched
+          ? "Correspond à EasyList"
+          : "Aucune correspondance";
+        indicator.title = easyListResult.filter
+          ? `Filtre EasyList correspondant: ${easyListResult.filter}. Aucun blocage n’est appliqué.`
+          : "Aucune règle réseau prise en charge ne correspond à cette ressource.";
+        resourceInfo.append(indicator);
+      }
       row.append(resourceInfo);
       if (resource.type === "iframe") {
         row.classList.add("resource-row-iframe");
@@ -341,7 +447,7 @@ function highlightIframeResource(resource, enabled) {
       world: "MAIN",
       func: setIframeElementHighlight,
       args: [resource.url, enabled],
-    }).catch(() => {});
+    }).catch(() => { });
   }
 }
 
@@ -623,7 +729,7 @@ async function checkDomainReputations() {
   }
   const hostnames = [...urlsByHostname.keys()];
   const accepted = window.confirm(
-    `Vérifier ${hostnames.length} domaine(s) ? Les URL complètes seront envoyées à Google Safe Browsing, les domaines au DNS public Google et à RDAP, et les IP résolues à AbuseIPDB. OpenPhish sera consulté pour comparer son flux public.`
+    `Vérifier ${hostnames.length} domaine(s) ? Les URL complètes seront envoyées à Google Safe Browsing, les domaines au DNS public Google et à RDAP, et les IP résolues à AbuseIPDB. OpenPhish sera consulté pour comparer son flux public. EasyList sera évaluée localement.`
   );
   if (!accepted) return;
 
@@ -653,7 +759,8 @@ async function checkDomainReputations() {
   );
   renderResults(document.querySelector("#search").value);
 
-  await Promise.all([
+  const [easyListResult] = await Promise.all([
+    evaluateResourcesWithEasyList(),
     checkGoogleSafeBrowsing(
       new Map([...urlsByHostname].map(([hostname, urls]) => [hostname, [...urls]])),
       safeBrowsingApiKey,
@@ -666,24 +773,30 @@ async function checkDomainReputations() {
 
   if (requestId === reputationRequestId) {
     renderResults(document.querySelector("#search").value);
-    status.textContent = "Vérification terminée. Un résultat positif indique un signalement, pas une décision automatique de blocage.";
+    const easyListSummary = easyListResult.ok
+      ? ` EasyList : ${easyListResult.evaluation.matchedCount} correspondances sur ${pageData.orderedResources.length}${easyListResult.stale ? " (copie en cache)" : ""}.`
+      : " EasyList indisponible; les autres vérifications ont continué.";
+    status.textContent = `Vérification terminée. Un résultat positif indique un signalement, pas une décision automatique de blocage.${easyListSummary}`;
   }
   button.disabled = false;
 }
 
 function updateSummary() {
+  const resources = pageData.orderedResources;
   const total = RESOURCE_TYPES.reduce(
-    (sum, type) => sum + pageData.resources[type].length,
+    (sum, type) => sum + resources.filter((resource) => resource.type === type).length,
     0
   );
-  document.querySelector("#resource-total").textContent = `${total} ressource${
-    total > 1 ? "s" : ""
-  }`;
+  document.querySelector("#resource-total").textContent = `${total} ressource${total > 1 ? "s" : ""
+    }`;
 
   const counts = document.querySelector("#type-counts");
   counts.replaceChildren(
     ...RESOURCE_TYPES.map((type) =>
-      createTypeBadge(type, pageData.resources[type].length)
+      createTypeBadge(
+        type,
+        resources.filter((resource) => resource.type === type).length
+      )
     )
   );
 }

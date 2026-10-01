@@ -1,5 +1,10 @@
 (() => {
 const DONTFOID_INTERVAL_MS = 3000;
+const NEW_RESOURCES_EVENT = "resource-origins:new-resources";
+const NEW_RESOURCE_BATCH_SIZE = 50;
+const INSPECT_PAGE_RESOURCES = Symbol.for("resource-origins.inspect-page-resources");
+const EASYLIST_LOG_PREFIX = "[Resource Origins EasyList]";
+
 const ELEMENT_MINIMUM_AREA_EVENT = "resource-origins:element-minimum-area";
 const LARGE_INTERACTIVE_DIV_SETTING_EVENT =
   "resource-origins:large-interactive-div-setting";
@@ -181,6 +186,52 @@ function disableDontfoidPointerEvents() {
         flashReappliedElement(bounds, "width-auto", target, path);
       }
     }
+  }
+}
+
+const seenPageResourceKeys = new Set();
+let pageResourceBaselineReady = false;
+
+function checkForNewPageResources() {
+  const newResources = [];
+  const scan = window[INSPECT_PAGE_RESOURCES]?.();
+  if (!scan) {
+    console.warn(`${EASYLIST_LOG_PREFIX} shared resource scanner is unavailable in this frame`);
+    return;
+  }
+
+  for (const { type, url } of scan.orderedResources) {
+    const resourceKey = `${type}:${url}`;
+    if (seenPageResourceKeys.has(resourceKey)) continue;
+    seenPageResourceKeys.add(resourceKey);
+    if (pageResourceBaselineReady) newResources.push({ type, url });
+  }
+
+  if (!pageResourceBaselineReady) {
+    pageResourceBaselineReady = true;
+    console.info(
+      `${EASYLIST_LOG_PREFIX} baseline captured`,
+      scan.orderedResources.length,
+      "resources",
+      location.href
+    );
+    return;
+  }
+
+  for (let offset = 0; offset < newResources.length; offset += NEW_RESOURCE_BATCH_SIZE) {
+    const batch = newResources.slice(offset, offset + NEW_RESOURCE_BATCH_SIZE);
+    console.info(`${EASYLIST_LOG_PREFIX} detected new resources`, {
+      count: batch.length,
+      resources: batch.map(({ type, url }) => {
+        const parsedUrl = new URL(url);
+        return `${type} ${parsedUrl.origin}${parsedUrl.pathname}`;
+      }),
+    });
+    window.dispatchEvent(
+      new CustomEvent(NEW_RESOURCES_EVENT, {
+        detail: JSON.stringify(batch),
+      })
+    );
   }
 }
 
@@ -611,9 +662,11 @@ window.addEventListener(LARGE_INTERACTIVE_DIV_SETTING_EVENT, (event) => {
 });
 
 disableDontfoidPointerEvents();
+checkForNewPageResources();
 // Also catches trigger listeners added after the element was inserted.
 setInterval(() => {
   disableDontfoidPointerEvents();
+  checkForNewPageResources();
   if (reapplyRules.size) reapplyAll();
   enforceDeniedElements();
 }, DONTFOID_INTERVAL_MS);

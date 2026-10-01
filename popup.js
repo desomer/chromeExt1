@@ -55,11 +55,45 @@ async function scanActiveTab() {
       }
     }
 
+    const monitoredResourcesKey = `monitored-resources:${tab.id}`;
+    const { [monitoredResourcesKey]: monitoredResources = [] } =
+      await chrome.storage.session.get(monitoredResourcesKey);
+    for (const resource of monitoredResources) {
+      if (!RESOURCE_TYPES.includes(resource.type) || typeof resource.url !== "string") {
+        continue;
+      }
+      const resourceKey = `${resource.type}:${resource.url}`;
+      const existingIndex = resourceIndexes.get(resourceKey);
+      const requesterDomains = Array.isArray(resource.requesterDomains)
+        ? resource.requesterDomains
+        : [];
+      const frameIds = Array.isArray(resource.frameIds) ? resource.frameIds : [];
+      if (existingIndex !== undefined) {
+        const existingResource = orderedResources[existingIndex];
+        existingResource.frameIds = [...new Set([...existingResource.frameIds, ...frameIds])];
+        existingResource.requesterDomains = [
+          ...new Set([...existingResource.requesterDomains, ...requesterDomains]),
+        ];
+        continue;
+      }
+
+      resourceIndexes.set(resourceKey, orderedResources.length);
+      resources[resource.type].push(resource.url);
+      orderedResources.push({
+        type: resource.type,
+        url: resource.url,
+        startTime: Number.MAX_SAFE_INTEGER,
+        frameIds,
+        requesterDomains,
+      });
+    }
+
     pageData = {
       pageUrl: mainFrame.pageUrl,
       resources,
       orderedResources,
     };
+    resetEasyListEvaluation();
     domainReputations = new Map();
     activeTabId = tab.id;
     const pageUrl = new URL(pageData.pageUrl);

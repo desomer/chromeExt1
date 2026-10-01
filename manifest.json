@@ -29,7 +29,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["intercept-window-open.js", "disable-elements.js"],
+      "js": ["resource-scanner.js", "intercept-window-open.js", "page-controls.js"],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true,
@@ -38,7 +38,7 @@
     },
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["confirm-new-tabs.js"],
+      "js": ["resource-scanner.js", "confirm-new-tabs.js", "resource-monitor.js"],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true,

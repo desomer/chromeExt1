@@ -1,3 +1,5 @@
+importScripts("easylist.js");
+
 const CONFIRMATION_DELAY_MS = 80;
 const APPROVAL_LIFETIME_MS = 2000;
 const DOWNLOAD_STARTUP_GRACE_MS = 30_000;
@@ -101,6 +103,53 @@ function isWebUrl(value) {
     return false;
   }
 }
+
+const MONITORED_RESOURCES_KEY_PREFIX = "monitored-resources:";
+const MAX_MONITORED_RESOURCES_PER_TAB = 200;
+let monitoredResourceWriteQueue = Promise.resolve();
+
+function rememberMonitoredResources(tabId, resources, requesterDomain, frameId) {
+  const key = `${MONITORED_RESOURCES_KEY_PREFIX}${tabId}`;
+  const operation = monitoredResourceWriteQueue.then(async () => {
+    const { [key]: storedResources = [] } = await chrome.storage.session.get(key);
+    const resourcesByKey = new Map(
+      storedResources.map((resource) => [`${resource.type}\u0000${resource.url}`, resource])
+    );
+
+    for (const resource of resources) {
+      const resourceKey = `${resource.type}\u0000${resource.url}`;
+      const existing = resourcesByKey.get(resourceKey) ?? {
+        ...resource,
+        requesterDomains: [],
+        frameIds: [],
+      };
+      if (requesterDomain && !existing.requesterDomains.includes(requesterDomain)) {
+        existing.requesterDomains.push(requesterDomain);
+      }
+      if (!existing.frameIds.includes(frameId)) existing.frameIds.push(frameId);
+      resourcesByKey.delete(resourceKey);
+      resourcesByKey.set(resourceKey, existing);
+    }
+
+    await chrome.storage.session.set({
+      [key]: [...resourcesByKey.values()].slice(-MAX_MONITORED_RESOURCES_PER_TAB),
+    });
+  });
+  monitoredResourceWriteQueue = operation.catch(() => {});
+  return operation;
+}
+
+function clearMonitoredResources(tabId) {
+  const operation = monitoredResourceWriteQueue.then(() =>
+    chrome.storage.session.remove(`${MONITORED_RESOURCES_KEY_PREFIX}${tabId}`)
+  );
+  monitoredResourceWriteQueue = operation.catch(() => {});
+  return operation;
+}
+
+chrome.webNavigation.onCommitted.addListener(({ tabId, frameId }) => {
+  if (frameId === 0 && Number.isInteger(tabId)) clearMonitoredResources(tabId);
+});
 
 const MODIFICATION_KINDS = new Set(["deny", "width-auto", "width-manual", "hidden"]);
 let modificationHistoryQueue = Promise.resolve();
@@ -588,6 +637,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   pendingTabs.delete(tabId);
   navigationStartTimes.delete(tabId);
   lastClickSources.delete(tabId);
+  clearMonitoredResources(tabId);
   clearModificationHistory(tabId);
 });
 
@@ -772,6 +822,101 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "evaluate-new-resources" && Number.isInteger(sender.tab?.id)) {
+    const logPrefix = "[Resource Origins EasyList]";
+    const requesterUrl = isWebUrl(sender.url) ? sender.url : message.requesterUrl;
+    if (!isWebUrl(requesterUrl) || !Array.isArray(message.resources)) {
+      console.warn(`${logPrefix} rejected request: invalid requester or resource list`);
+      sendResponse({ ok: false, reason: "invalid requester or resource list" });
+      return;
+    }
+
+    const resources = message.resources
+      .filter(
+        (resource) =>
+          ["css", "js", "iframe"].includes(resource?.type) &&
+          typeof resource.url === "string" &&
+          resource.url.length <= 8192
+      )
+      .slice(0, 100)
+      .flatMap((resource) => {
+        try {
+          const url = new URL(resource.url);
+          if (url.protocol !== "http:" && url.protocol !== "https:") return [];
+          return [{ type: resource.type, url: url.href }];
+        } catch {
+          return [];
+        }
+      });
+    if (!resources.length) {
+      console.info(`${logPrefix} received no supported resources`);
+      sendResponse({ ok: true, matchedCount: 0 });
+      return;
+    }
+    console.info(`${logPrefix} evaluating resources`, {
+      tabId: sender.tab.id,
+      frameId: sender.frameId ?? 0,
+      count: resources.length,
+    });
+
+    (async () => {
+      await rememberMonitoredResources(
+        sender.tab.id,
+        resources,
+        new URL(requesterUrl).hostname,
+        sender.frameId ?? 0
+      ).catch(() => {});
+      const list = await EasyListEvaluator.loadList();
+      const evaluation = EasyListEvaluator.evaluate(
+        resources.map((resource) => ({
+          ...resource,
+          requesterDomains: [new URL(requesterUrl).hostname],
+        })),
+        requesterUrl,
+        list.text,
+        getRootDomain
+      );
+      if (!evaluation.filterCount) throw new Error("No supported EasyList filters");
+      console.info(`${logPrefix} evaluation complete`, {
+        filters: evaluation.filterCount,
+        ignored: evaluation.ignoredCount,
+        matches: evaluation.matchedCount,
+      });
+
+      return resources.flatMap((resource) => {
+        const result = evaluation.results.get(`${resource.type}\u0000${resource.url}`);
+        return result?.matched
+          ? [{ ...resource, filter: result.filter, stale: list.stale }]
+          : [];
+      });
+    })()
+      .then((matches) => {
+        console.info(`${logPrefix} returning matches to content script`, matches.length);
+        const response = { ok: true, matchedCount: matches.length, matches };
+        if (!matches.length || (sender.frameId ?? 0) === 0) {
+          sendResponse(response);
+          return;
+        }
+
+        chrome.tabs
+          .sendMessage(
+            sender.tab.id,
+            { action: "show-easylist-risks", matches },
+            { frameId: 0 }
+          )
+          .then(() => sendResponse(response))
+          .catch((error) => {
+            console.error(`${logPrefix} could not relay iframe risks to the top frame`, error);
+            sendResponse({ ok: false, reason: "could not relay risks to the top frame" });
+          });
+      })
+      .catch((error) => {
+        console.error(`${logPrefix} evaluation failed`, error);
+        sendResponse({ ok: false, reason: error?.message ?? String(error) });
+      });
+    return true;
+  }
+
   if (message.action === "remember-click-source" && sender.tab?.id) {
     if (
       typeof message.selector !== "string" ||
