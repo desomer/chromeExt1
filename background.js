@@ -139,12 +139,14 @@ function sanitizeModification(record) {
 
 // Serialized so concurrent read-modify-write cycles don't drop entries.
 function queueModificationHistory(operation) {
-  modificationHistoryQueue = modificationHistoryQueue.then(operation).catch(() => {});
+  const result = modificationHistoryQueue.then(operation);
+  modificationHistoryQueue = result.catch(() => {});
+  return result;
 }
 
 function updateModificationHistory(tabId, update) {
   const key = `modifications:${tabId}`;
-  queueModificationHistory(async () => {
+  return queueModificationHistory(async () => {
     const { [key]: history = [] } = await chrome.storage.session.get(key);
     await chrome.storage.session.set({ [key]: update(history).slice(-200) });
   });
@@ -152,9 +154,9 @@ function updateModificationHistory(tabId, update) {
 
 function recordModification(tabId, record) {
   const entry = sanitizeModification(record);
-  if (!entry) return;
+  if (!entry) return Promise.resolve();
 
-  updateModificationHistory(tabId, (history) => {
+  return updateModificationHistory(tabId, (history) => {
     const previous = history.find(
       (item) => item.uid === entry.uid && item.kind === entry.kind
     );
@@ -248,6 +250,37 @@ function verifyConfirmationSource(selector, eventType, point) {
     const types = typesOf(target);
     return triggerTypes.includes(wanted) ? types.includes(wanted) : types.length > 0;
   };
+  const describeGlobalListeners = (target, owner) => {
+    const types = triggerTypes.includes(wanted) ? [wanted] : typesOf(target);
+    return types.flatMap((type) => {
+      const registrations = registry?.listenersByTarget.get(target)?.get(type) ?? [];
+      const listeners = registrations.map((registration) => ({
+        id: registration.id,
+        owner,
+        type,
+        kind: "listener",
+        capture: registration.capture === true,
+        name:
+          typeof registration.listener === "function"
+            ? registration.listener.name
+            : registration.listener?.handleEvent?.name ?? "",
+        origin: String(registration.origin ?? "").slice(0, 500),
+      }));
+      try {
+        if (typeof target[`on${type}`] === "function") {
+          listeners.push({
+            id: `${owner}:property:${type}`,
+            owner,
+            type,
+            kind: "property",
+            capture: false,
+            origin: `${owner}.on${type}`,
+          });
+        }
+      } catch {}
+      return listeners;
+    });
+  };
   const pathOf = (element, alwaysIndex) => {
     const parts = [];
     for (let current = element; current instanceof Element && current !== document.documentElement; current = current.parentElement) {
@@ -275,12 +308,15 @@ function verifyConfirmationSource(selector, eventType, point) {
   }
   const candidate = candidates.find((item) => item !== element && matches(item));
   if (!candidate) {
+    const globalTargets = [[document, "document"], [window, "window"]]
+      .filter(([target]) => matches(target));
     return {
       found: true,
       verified: false,
-      globalOwners: [[document, "document"], [window, "window"]]
-        .filter(([target]) => matches(target))
-        .map(([, name]) => name),
+      globalOwners: globalTargets.map(([, name]) => name),
+      globalListeners: globalTargets.flatMap(([target, owner]) =>
+        describeGlobalListeners(target, owner)
+      ),
     };
   }
 
@@ -306,14 +342,58 @@ function verifyConfirmationSource(selector, eventType, point) {
       ).slice(0, 80),
       width: Math.round(bounds.width),
       height: Math.round(bounds.height),
+      connected: candidate.isConnected,
+      visible:
+        candidate.isConnected &&
+        getComputedStyle(candidate).display !== "none" &&
+        getComputedStyle(candidate).visibility !== "hidden" &&
+        bounds.width > 0 &&
+        bounds.height > 0,
+      capturedAt: Date.now(),
       frameUrl: location.href,
     },
   };
 }
 
-function removeDeniedClickHandlers(selector, destinationUrl, removeHandlers) {
+function removeDeniedClickHandlers(
+  selector,
+  destinationUrl,
+  removeHandlers,
+  reapplySelector = selector,
+  selectedGlobalListeners = []
+) {
+  const registry = window[Symbol.for("resource-origins.listener-registry")];
+  const globalRemoved = [];
+  const globalTargets = { document, window };
+  for (const selection of selectedGlobalListeners) {
+    const target = globalTargets[selection.owner];
+    if (!target) continue;
+
+    if (selection.kind === "listener") {
+      const registrations = registry?.listenersByTarget
+        .get(target)
+        ?.get(selection.type);
+      const registration = registrations?.find(
+        (item) => item.id === selection.id
+      );
+      if (!registration) continue;
+      target.removeEventListener(
+        selection.type,
+        registration.listener,
+        registration.capture
+      );
+      globalRemoved.push(`${selection.owner}:${selection.type}`);
+    } else if (
+      selection.kind === "property" &&
+      typeof target[`on${selection.type}`] === "function"
+    ) {
+      target[`on${selection.type}`] = null;
+      globalRemoved.push(`${selection.owner}:${selection.type}`);
+    }
+  }
+
   if (typeof selector !== "string" || !selector || selector.length > 2048) {
-    return { changed: false };
+    return { changed: globalRemoved.length > 0, globalRemoved };
   }
 
   let element;
@@ -322,11 +402,21 @@ function removeDeniedClickHandlers(selector, destinationUrl, removeHandlers) {
   } catch {
     return { changed: false };
   }
-  if (!(element instanceof Element)) return { changed: false };
+  if (!(element instanceof Element)) {
+    if (removeHandlers) {
+      registry?.reapply?.addSelector(reapplySelector, "deny", {
+        url: String(destinationUrl ?? ""),
+      });
+    }
+    return {
+      changed: globalRemoved.length > 0,
+      missing: true,
+      globalRemoved,
+    };
+  }
 
-  const registry = window[Symbol.for("resource-origins.listener-registry")];
   const listeners = registry?.listenersByTarget.get(element);
-  const removedTypes = new Set();
+  const removedTypes = new Set(globalRemoved);
   const triggerTypes = removeHandlers
     ? ["click", "auxclick", "mousedown", "mouseup", "touchstart", "touchend", "pointerdown", "pointerup", "focus", "blur"]
     : [];
@@ -360,7 +450,13 @@ function removeDeniedClickHandlers(selector, destinationUrl, removeHandlers) {
 
   const changed = removedTypes.size > 0 || targetRemoved;
   if (removeHandlers && (element instanceof HTMLElement || element instanceof SVGElement)) {
-    element.style.setProperty("pointer-events", "none", "important");
+    if (
+      element.style.getPropertyValue("pointer-events") !== "none" ||
+      element.style.getPropertyPriority("pointer-events") !== "important"
+    ) {
+      element.style.setProperty("pointer-events", "none", "important");
+    }
+    removedTypes.add("pointer-events");
   }
   if (removeHandlers) registry?.reapply?.add(element, "deny", { url: String(destinationUrl ?? "") });
   if (registry) {
@@ -459,6 +555,7 @@ async function guardCreatedTab(tabId) {
         action: "show-tab-confirmation",
         url: candidate.url,
         active: candidate.active,
+        interceptionMode: "tab-created",
       },
       { frameId: 0 }
     );
@@ -741,6 +838,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           active: message.active,
           newWindow: message.newWindow,
           popup: message.popup,
+          interceptionMode: message.interceptionMode,
           sourceSelector: message.sourceSelector,
           sourceSnapshot: message.sourceSnapshot,
           sourceFrameId: sender.frameId ?? 0,
@@ -779,9 +877,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       url: message.url,
       frameUrl: snapshot.frameUrl || sender.url,
     };
+    const selectedGlobalListeners = (Array.isArray(message.globalListeners)
+      ? message.globalListeners
+      : []
+    )
+      .filter(
+        (listener) =>
+          ["document", "window"].includes(listener?.owner) &&
+          ["listener", "property"].includes(listener?.kind) &&
+          typeof listener.id === "string" &&
+          listener.id.length <= 100 &&
+          typeof listener.type === "string" &&
+          listener.type.length <= 64
+      )
+      .slice(0, 20)
+      .map(({ id, owner, type, kind }) => ({ id, owner, type, kind }));
+    const finish = (record) =>
+      recordModification(tabId, record ?? fallbackRecord).then(
+        () => sendResponse({ recorded: true }),
+        () => sendResponse({ recorded: false })
+      );
     if (typeof message.selector !== "string" || !message.selector) {
-      recordModification(tabId, fallbackRecord);
-      return;
+      finish(fallbackRecord);
+      return true;
     }
 
     chrome.scripting
@@ -789,12 +907,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         target: { tabId, frameIds: [frameId] },
         world: "MAIN",
         func: removeDeniedClickHandlers,
-        args: [message.selector, String(message.url ?? ""), message.removeHandlers === true],
+        args: [
+          message.selector,
+          String(message.url ?? ""),
+          message.removeHandlers === true,
+          typeof snapshot.path === "string" && snapshot.path
+            ? snapshot.path
+            : message.selector,
+          selectedGlobalListeners,
+        ],
       })
-      .then(([injection]) => injection?.result?.record)
+      .then(([injection]) => {
+        const result = injection?.result;
+        if (result?.record) return result.record;
+        if (!result?.globalRemoved?.length) return null;
+        return {
+          ...fallbackRecord,
+          types: [
+            ...(Array.isArray(fallbackRecord.types) ? fallbackRecord.types : []),
+            ...result.globalRemoved,
+          ],
+        };
+      })
       .catch(() => null)
-      .then((record) => recordModification(tabId, record ?? fallbackRecord));
-    return;
+      .then(finish);
+    return true;
   }
 
   if (message.action === "record-modification" || message.action === "forget-modification") {

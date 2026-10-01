@@ -177,7 +177,9 @@ function disableDontfoidPointerEvents() {
       modifiedElements.add(target);
       autoModifiedPaths.add(path);
       target.style.setProperty("width", "0px");
-      if (wasReset || recreated) flashReappliedElement(bounds);
+      if (wasReset || recreated) {
+        flashReappliedElement(bounds, "width-auto", target, path);
+      }
     }
   }
 }
@@ -209,12 +211,13 @@ const reapplyObserver = new MutationObserver((records) => {
   if (!records.every(isOwnMutation)) scheduleReapply();
 });
 
-function flashReappliedElement(bounds) {
+function flashReappliedElement(bounds, kind, element, selector = "") {
   if (!document.documentElement || (!bounds.width && !bounds.height)) return;
 
   const overlay = document.createElement("div");
   flashOverlays.add(overlay);
   overlay.setAttribute("aria-hidden", "true");
+  overlay.dataset.resourceOriginsReapplied = "true";
   for (const [property, value] of Object.entries({
     position: "fixed",
     "z-index": "2147483646",
@@ -230,6 +233,34 @@ function flashReappliedElement(bounds) {
   })) {
     overlay.style.setProperty(property, value, "important");
   }
+
+  const label = document.createElement("span");
+  const id = element?.id ? `#${CSS.escape(element.id)}` : "—";
+  const path =
+    element instanceof Element ? getPathSelector(element) : selector || "—";
+  label.textContent = `Type : ${kind || "inconnu"}\nID : ${id}\nPath : ${path || "—"}`;
+  label.dataset.resourceOriginsReappliedLabel = "true";
+  for (const [property, value] of Object.entries({
+    position: "absolute",
+    top: "4px",
+    left: "4px",
+    width: "max-content",
+    "max-width": "min(360px, calc(100vw - 24px))",
+    padding: "5px 7px",
+    color: "#062b12",
+    "font-family": "Consolas, monospace",
+    "font-size": "11px",
+    "font-weight": "700",
+    "line-height": "1.35",
+    "overflow-wrap": "anywhere",
+    "white-space": "pre-wrap",
+    background: "rgba(126, 226, 160, 0.94)",
+    border: "1px solid #16853b",
+    "border-radius": "2px",
+  })) {
+    label.style.setProperty(property, value, "important");
+  }
+  overlay.append(label);
   document.documentElement.append(overlay);
 
   const startScrollX = window.scrollX;
@@ -321,7 +352,7 @@ function enforceDeniedElements() {
     if (!removedTypes.size && !targetRemoved) continue;
     state.types = [...new Set([...state.types, ...removedTypes])];
     state.targetRemoved ||= targetRemoved;
-    flashReappliedElement(bounds);
+    flashReappliedElement(bounds, "deny", element, getPathSelector(element));
   }
 }
 
@@ -392,7 +423,14 @@ function applyRule(key, rule, element, forceFlash = false, isRetry = false) {
   }
   linkElementToRule(element, rule.kind, key);
   if (isRetry) return;
-  if (reapplied || forceFlash) flashReappliedElement(getFlashBounds(rule, bounds));
+  if (reapplied || forceFlash) {
+    flashReappliedElement(
+      getFlashBounds(rule, bounds),
+      rule.kind,
+      element,
+      rule.selector
+    );
+  }
   if (rule.kind === "deny" && (reapplied || forceFlash)) scheduleDenyRetries(key, rule, element);
 }
 
@@ -496,6 +534,25 @@ function addReapplyRule(element, kind, data = {}) {
   notifyRulesChanged();
 }
 
+function addReapplySelector(selector, kind, data = {}) {
+  if (typeof selector !== "string" || !selector || !REAPPLY_KINDS.has(kind)) return;
+  try {
+    document.querySelector(selector);
+  } catch {
+    return;
+  }
+
+  const key = `${kind}|${selector}`;
+  reapplyRules.set(key, {
+    kind,
+    selector,
+    url: typeof data.url === "string" ? data.url : "",
+  });
+  updateObserver();
+  notifyRulesChanged();
+  scheduleReapply();
+}
+
 function removeReapplyRule(element, kind) {
   const keys = ruleKeysByElement.get(element);
   const key = keys?.get(kind);
@@ -533,7 +590,11 @@ window.addEventListener(REAPPLY_RULES_RESTORE_EVENT, (event) => {
 
 const reapplyRegistry = window[LISTENER_REGISTRY];
 if (reapplyRegistry) {
-  reapplyRegistry.reapply = { add: addReapplyRule, remove: removeReapplyRule };
+  reapplyRegistry.reapply = {
+    add: addReapplyRule,
+    addSelector: addReapplySelector,
+    remove: removeReapplyRule,
+  };
   reapplyRegistry.getElementPath = getPathSelector;
 }
 

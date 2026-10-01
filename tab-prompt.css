@@ -82,6 +82,8 @@ main {
   border-radius: 3px;
 }
 
+#interception-mode,
+#source-selector,
 #source-path,
 #source-event {
   display: block;
@@ -94,10 +96,24 @@ main {
   white-space: nowrap;
 }
 
+#interception-mode {
+  color: #8fc0ff;
+}
+
+#interception-mode[hidden],
+#source-selector[hidden],
 #source-path[hidden],
 #source-event[hidden],
+#source-state[hidden],
 #source-check[hidden] {
   display: none;
+}
+
+#source-state {
+  display: block;
+  margin-top: 6px;
+  color: #b5c4d8;
+  font-size: 10px;
 }
 
 #source-check {
@@ -109,6 +125,47 @@ main {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
+}
+
+#global-listeners {
+  max-height: 110px;
+  margin-top: 8px;
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid #3a4b64;
+}
+
+#global-listeners legend {
+  padding: 0 4px;
+  color: #ffd27a;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+#global-listener-list label {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 4px 2px;
+  color: #e6edf8;
+  font-size: 10px;
+}
+
+#global-listener-list input {
+  flex: none;
+  margin: 1px 0 0;
+}
+
+#global-listener-list code {
+  display: block;
+  overflow: hidden;
+  max-width: 330px;
+  margin-top: 2px;
+  color: #94a5bd;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .check-ok {
@@ -139,6 +196,7 @@ main {
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .actions {
@@ -178,4 +236,16 @@ button:disabled {
 .secondary {
   color: #a8cfff;
   background: #17243a;
+}
+
+#deny-disable {
+  color: #ffffff;
+  background:#ff231b;
+  border-color: white;
+}
+
+#deny {
+  color: #ffffff;
+  background:#ff231b;
+  border-color: white;
 }

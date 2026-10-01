@@ -17,14 +17,20 @@
       </div>
       <strong id="hostname">Destination</strong>
       <span id="url"></span>
+      <code id="interception-mode" hidden></code>
+      <code id="source-selector" hidden></code>
       <code id="source-path" hidden></code>
       <code id="source-event" hidden></code>
+      <span id="source-state" hidden></span>
       <span id="source-check" hidden></span>
+      <fieldset id="global-listeners" hidden>
+        <legend>Listeners globaux à retirer</legend>
+        <div id="global-listener-list"></div>
+      </fieldset>
       <div class="actions">
         <button id="always-allow-to" class="secondary" type="button">
-          Destination always allow
+          Allow this destination
         </button>
-        <button id="deny" class="secondary" type="button" title="Deny this request">Deny</button>
         <button
           id="deny-disable"
           class="secondary"
@@ -34,10 +40,11 @@
         >
           Deny &amp; disable
         </button>
-        <button id="allow" class="primary" type="button">Allow</button>
+        <button id="deny" class="secondary" type="button" title="Deny this request">  Deny </button>
         <button id="always-allow-from" class="secondary" type="button">
-          All allow from domain
+          No confirmation for this site
         </button>
+        <button id="allow" class="primary" type="button">Allow</button>
       </div>
     </main>
     <script src="tab-prompt.js"></script>

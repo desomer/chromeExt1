@@ -10,6 +10,7 @@
   const originalAddEventListener = EventTarget.prototype.addEventListener;
   const originalRemoveEventListener = EventTarget.prototype.removeEventListener;
   const originalOpen = window.open;
+  let nextListenerId = 1;
   let confirmationEnabled = true;
 
   function getCapture(options) {
@@ -30,6 +31,7 @@
     const caller = frames.find(
       (frame) =>
         !frame.includes("getListenerOrigin") &&
+        !frame.includes("patchedAddEventListener") &&
         !frame.includes("EventTarget.addEventListener")
     );
     return caller?.trim() ?? "";
@@ -53,7 +55,12 @@
             registration.listener === listener && registration.capture === capture
         )
       ) {
-        registrations.push({ listener, capture, origin: getListenerOrigin() });
+        registrations.push({
+          id: String(nextListenerId++),
+          listener,
+          capture,
+          origin: getListenerOrigin(),
+        });
       }
       listeners.set(normalizedType, registrations);
       listenersByTarget.set(this, listeners);
@@ -129,22 +136,47 @@
     "touchstart", "touchend", "keydown",
   ];
 
-  // The deepest clicked node often has no handler; the one that owns it is further up the path.
+  function findVisualEventSource(event) {
+    const path = event?.composedPath?.() ?? [];
+    const pathElements = path.filter((node) => node instanceof Element);
+    const specificTarget = pathElements.find(
+      (element) => element !== document.documentElement && element !== document.body
+    );
+    if (specificTarget) return specificTarget;
+
+    const pointer = event?.touches?.[0] ?? event;
+    if (Number.isFinite(pointer?.clientX) && Number.isFinite(pointer?.clientY)) {
+      const pointedTarget = document
+        .elementsFromPoint(pointer.clientX, pointer.clientY)
+        .find(
+          (element) => element !== document.documentElement && element !== document.body
+        );
+      if (pointedTarget) return pointedTarget;
+    }
+    return pathElements[0] ?? null;
+  }
+
+  // Match the actual event type: a click listener must not own a mousedown request.
   function findListenerOwner(event) {
     const path = event?.composedPath?.() ?? [];
+    const eventType = String(event?.type ?? "").toLowerCase();
     const owner = path.find(
       (node) =>
         node instanceof Element &&
-        TRIGGER_EVENT_TYPES.some((type) => {
-          if (listenersByTarget.get(node)?.has(type)) return true;
-          try {
-            return typeof node[`on${type}`] === "function";
-          } catch {
-            return false;
-          }
-        })
+        TRIGGER_EVENT_TYPES.includes(eventType) &&
+        (listenersByTarget.get(node)?.has(eventType) ||
+          (() => {
+            try {
+              return (
+                typeof node[`on${eventType}`] === "function" ||
+                node.hasAttribute(`on${eventType}`)
+              );
+            } catch {
+              return false;
+            }
+          })())
     );
-    return owner ?? path.find((node) => node instanceof Element) ?? null;
+    return owner ?? findVisualEventSource(event);
   }
 
   function getElementSelector(source) {
@@ -218,7 +250,7 @@
 
       const source = getCurrentEventSource();
       const eventType = window.event?.type ?? "";
-      announceElement(source, OPEN_SOURCE_EVENT);
+      announceElement(source, OPEN_SOURCE_EVENT, eventType);
       window.dispatchEvent(
         new CustomEvent(REQUEST_EVENT, {
           detail: {
