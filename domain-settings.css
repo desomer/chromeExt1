@@ -149,6 +149,13 @@ tbody tr:hover {
   overflow-wrap: anywhere;
 }
 
+.block-date-cell {
+  min-width: 145px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .setting-state {
   display: inline-block;
   padding: 4px 7px;

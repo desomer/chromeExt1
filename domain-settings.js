@@ -6,6 +6,10 @@ const DOMAIN_SETTING_KEYS = [
   "allowedTabDestinations",
 ];
 const BLOCK_RULE_PATTERN = /^\|\|(.+)\^$/;
+const blockDateFormatter = new Intl.DateTimeFormat("fr-FR", {
+  dateStyle: "short",
+  timeStyle: "medium",
+});
 
 const SETTINGS = [
   {
@@ -82,6 +86,21 @@ function createStateCell(domain, setting, rules) {
   return cell;
 }
 
+function createBlockDateCell(domain, rules) {
+  const cell = document.createElement("td");
+  cell.className = "block-date-cell";
+  if (!rules.blockedOrigins?.[domain]) {
+    cell.textContent = "—";
+    return cell;
+  }
+
+  const timestamp = rules.blockedOriginTimestamps?.[domain];
+  cell.textContent = Number.isFinite(timestamp)
+    ? blockDateFormatter.format(new Date(timestamp))
+    : "Date inconnue";
+  return cell;
+}
+
 function renderDomainList(rules) {
   domainList.replaceChildren();
   const query = domainSearch.value.trim().toLocaleLowerCase();
@@ -102,7 +121,7 @@ function renderDomainList(rules) {
     const row = document.createElement("tr");
     const empty = document.createElement("td");
     empty.className = "empty-row";
-    empty.colSpan = SETTINGS.length + 2;
+    empty.colSpan = SETTINGS.length + 3;
     empty.textContent = query
       ? "Aucun domaine ne correspond à cette recherche."
       : "Aucun réglage spécifique à un domaine.";
@@ -120,6 +139,7 @@ function renderDomainList(rules) {
     for (const setting of SETTINGS) {
       row.append(createStateCell(domain, setting, rules));
     }
+    row.append(createBlockDateCell(domain, rules));
 
     const actions = document.createElement("td");
     const removeButton = document.createElement("button");
@@ -149,7 +169,7 @@ async function removeDomain(domain, button) {
       DOMAIN_SETTING_KEYS.map((key) => [key, {}])
     );
     const [rules, dynamicRules] = await Promise.all([
-      chrome.storage.local.get(defaults),
+      chrome.storage.local.get({ ...defaults, blockedOriginTimestamps: {} }),
       chrome.declarativeNetRequest.getDynamicRules(),
     ]);
     const blockRuleIds = dynamicRules
@@ -168,8 +188,12 @@ async function removeDomain(domain, button) {
     for (const key of DOMAIN_SETTING_KEYS) {
       delete rules[key][domain];
     }
+    delete rules.blockedOriginTimestamps[domain];
     await chrome.storage.local.set(
-      Object.fromEntries(DOMAIN_SETTING_KEYS.map((key) => [key, rules[key]]))
+      {
+        ...Object.fromEntries(DOMAIN_SETTING_KEYS.map((key) => [key, rules[key]])),
+        blockedOriginTimestamps: rules.blockedOriginTimestamps,
+      }
     );
     await loadDomainSettings();
   } catch {
@@ -186,7 +210,7 @@ async function loadDomainSettings() {
       DOMAIN_SETTING_KEYS.map((key) => [key, {}])
     );
     const [rules, dynamicRules] = await Promise.all([
-      chrome.storage.local.get(defaults),
+      chrome.storage.local.get({ ...defaults, blockedOriginTimestamps: {} }),
       chrome.declarativeNetRequest.getDynamicRules(),
     ]);
     const blockedDomains = dynamicRules.flatMap((rule) => {
@@ -213,7 +237,7 @@ domainSearch.addEventListener("input", () => loadDomainSettings());
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (
     areaName === "local" &&
-    DOMAIN_SETTING_KEYS.some((key) => changes[key])
+    (DOMAIN_SETTING_KEYS.some((key) => changes[key]) || changes.blockedOriginTimestamps)
   ) {
     loadDomainSettings();
   }

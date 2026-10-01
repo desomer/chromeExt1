@@ -55,6 +55,24 @@ main {
   align-items: center;
 }
 
+.field-label {
+  display: block;
+  margin-top: 6px;
+  color: #94a5bd;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.requester strong {
+  display: block;
+  overflow: hidden;
+  color: #e6edf8;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .timeout-badge {
   padding: 4px 7px;
   color: #b5c4d8;
@@ -62,6 +80,43 @@ main {
   font-weight: 700;
   background: #202d40;
   border-radius: 3px;
+}
+
+#source-path,
+#source-event {
+  display: block;
+  overflow: hidden;
+  margin-top: 6px;
+  color: #ffb4ae;
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#source-path[hidden],
+#source-event[hidden],
+#source-check[hidden] {
+  display: none;
+}
+
+#source-check {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.check-ok {
+  color: #7ee2a0;
+}
+
+.check-warning {
+  color: #ffd27a;
 }
 
 #hostname {
@@ -88,9 +143,14 @@ main {
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
+}
+
+button[hidden] {
+  display: none;
 }
 
 

@@ -71,17 +71,30 @@ window.addEventListener("message", (event) => {
       "http:",
       "https:",
     ].includes(url.protocol);
-    const denyButton = document.querySelector("#deny");
-    denyButton.textContent = data.removeTriggerOnDeny ? "Deny & disable" : "Deny";
-    denyButton.title = data.removeTriggerOnDeny
-      ? "Deny and remove click handlers from the source element"
-      : "Deny this request";
+    const sourcePath = document.querySelector("#source-path");
+    const sourceTag = data.sourceTag ? `<${data.sourceTag}> ` : "";
+    sourcePath.textContent = data.sourcePath ? `Source : ${sourceTag}${data.sourcePath}` : "";
+    sourcePath.title = data.sourcePath ? `${sourceTag}${data.sourcePath}` : "";
+    const sourceEvent = document.querySelector("#source-event");
+    sourceEvent.textContent = data.sourceEvent ? `Déclencheur : ${data.sourceEvent}` : "";
+    sourceEvent.hidden = !data.sourceEvent;
+    const sourceCheck = document.querySelector("#source-check");
+    sourceCheck.textContent = data.sourceCheck || "";
+    sourceCheck.title = data.sourceCheck || "";
+    sourceCheck.className = data.sourceCheck?.startsWith("✓") ? "check-ok" : "check-warning";
+    sourceCheck.hidden = !data.sourceCheck;
+    sourcePath.hidden = !data.sourcePath;
+    document.querySelector("#deny-disable").hidden = !data.removeTriggerOnDeny;
     document.querySelector("#allow").focus();
   };
   channel.start();
 });
 
 document.querySelector("#deny").addEventListener("click", () => {
+  channel?.postMessage({ action: "deny" });
+});
+
+document.querySelector("#deny-disable").addEventListener("click", () => {
   channel?.postMessage({ action: "deny", removeTrigger: true });
 });
 

@@ -9,11 +9,16 @@
   <body>
     <main>
       <div class="prompt-heading">
-        <p class="eyebrow">Ce site souhaite télécharger un fichier</p>
+        <p class="eyebrow">Confirmation de téléchargement</p>
         <span class="prompt-indicators">
           <span id="pending-count" class="count-badge" aria-live="polite">1</span>
         </span>
       </div>
+      <div class="requester">
+        <span id="requester-label" class="field-label">Site demandeur</span>
+        <strong id="requester">Origine non communiquée</strong>
+      </div>
+      <span class="field-label">Fichier demandé</span>
       <strong id="hostname">Fichier</strong>
       <span id="url"></span>
       <div class="actions">

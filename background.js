@@ -1,9 +1,61 @@
 const CONFIRMATION_DELAY_MS = 80;
 const APPROVAL_LIFETIME_MS = 2000;
+const DOWNLOAD_STARTUP_GRACE_MS = 30_000;
+const DOWNLOAD_CONTROL_RESTORED_ALARM = "download-control-restored";
 const pendingTabs = new Map();
 const approvedOpenings = [];
 const approvedDownloads = [];
 const navigationStartTimes = new Map();
+let downloadControlEnabledAt = 0;
+const downloadStartupGraceReady = chrome.storage.session
+  .get("downloadControlEnabledAt")
+  .then(({ downloadControlEnabledAt: storedTime = 0 }) => {
+    downloadControlEnabledAt = Math.max(downloadControlEnabledAt, storedTime);
+  })
+  .catch(() => {});
+
+function suspendDownloadControlForStartup() {
+  downloadControlEnabledAt = Date.now() + DOWNLOAD_STARTUP_GRACE_MS;
+  chrome.storage.session.set({ downloadControlEnabledAt }).catch(() => {});
+  chrome.alarms.create(DOWNLOAD_CONTROL_RESTORED_ALARM, {
+    when: downloadControlEnabledAt,
+  });
+}
+
+chrome.runtime.onStartup.addListener(suspendDownloadControlForStartup);
+
+async function playDownloadControlRestoredBeep() {
+  try {
+    await chrome.offscreen.createDocument({
+      url: "download-beep.html",
+      reasons: ["AUDIO_PLAYBACK"],
+      justification: "Émettre un bip lorsque le contrôle des téléchargements reprend.",
+    });
+  } catch {
+    // The offscreen document may already exist.
+  }
+
+  try {
+    await chrome.runtime.sendMessage({ action: "play-download-control-restored-beep" });
+  } catch {
+    // Audio is best-effort; download control must resume regardless.
+  }
+}
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== DOWNLOAD_CONTROL_RESTORED_ALARM) return;
+  await downloadStartupGraceReady;
+  if (Date.now() < downloadControlEnabledAt) {
+    chrome.alarms.create(DOWNLOAD_CONTROL_RESTORED_ALARM, {
+      when: downloadControlEnabledAt,
+    });
+    return;
+  }
+  await playDownloadControlRestoredBeep();
+});
+
+// Last trusted click per tab, from any frame, to attribute openings that lost their source.
+const lastClickSources = new Map();
 
 // Small approximation of the public suffix list, only for domains this extension is likely to see.
 const MULTI_LABEL_SUFFIXES = new Set([
@@ -66,6 +118,7 @@ function sanitizeModification(record) {
     uid,
     kind: record.kind,
     selector: text(record.selector, 2048),
+    path: text(record.path, 2048),
     tag: text(record.tag, 64),
     label: text(record.label, 120),
     width: number(record.width),
@@ -121,7 +174,141 @@ function forgetModification(tabId, uid, kind) {
 }
 
 function clearModificationHistory(tabId) {
-  queueModificationHistory(() => chrome.storage.session.remove(`modifications:${tabId}`));
+  queueModificationHistory(() =>
+    chrome.storage.session.remove([`modifications:${tabId}`, `reapply:${tabId}`])
+  );
+}
+
+const REAPPLY_RULE_KINDS = new Set(["width-manual", "hidden", "deny"]);
+
+function saveReapplyRules(tabId, frameKey, rulesJson) {
+  if (typeof frameKey !== "string" || !frameKey || frameKey.length > 2048) return;
+  let rules;
+  try {
+    rules = JSON.parse(rulesJson);
+  } catch {
+    return;
+  }
+  if (!Array.isArray(rules)) return;
+
+  const sanitized = rules
+    .filter(
+      (rule) =>
+        REAPPLY_RULE_KINDS.has(rule?.kind) &&
+        typeof rule.selector === "string" &&
+        rule.selector.length <= 2048
+    )
+    .slice(0, 100)
+    .map((rule) => ({
+      kind: rule.kind,
+      selector: rule.selector,
+      url: typeof rule.url === "string" ? rule.url.slice(0, 2048) : "",
+    }));
+  const key = `reapply:${tabId}`;
+  queueModificationHistory(async () => {
+    const { [key]: rulesByFrame = {} } = await chrome.storage.session.get(key);
+    if (sanitized.length) rulesByFrame[frameKey] = sanitized;
+    else delete rulesByFrame[frameKey];
+    await chrome.storage.session.set({ [key]: rulesByFrame });
+  });
+}
+
+async function getReapplyRules(tabId, frameKey) {
+  await modificationHistoryQueue;
+  const key = `reapply:${tabId}`;
+  const { [key]: rulesByFrame = {} } = await chrome.storage.session.get(key);
+  const rules = rulesByFrame[frameKey];
+  return Array.isArray(rules) && rules.length ? JSON.stringify(rules) : null;
+}
+
+// Runs in the page world: confirms the source owns a trigger listener, or finds the element
+// that does (topmost under the click first, e.g. a high z-index overlay, then ancestors).
+function verifyConfirmationSource(selector, eventType, point) {
+  const registry = window[Symbol.for("resource-origins.listener-registry")];
+  const triggerTypes = [
+    "click", "auxclick", "mousedown", "mouseup", "pointerdown", "pointerup",
+    "touchstart", "touchend", "keydown",
+  ];
+  const wanted = eventType.replace(" (script)", "");
+  const typesOf = (target) => {
+    const registered = registry?.listenersByTarget.get(target);
+    return triggerTypes.filter((type) => {
+      if (registered?.has(type)) return true;
+      try {
+        return (
+          typeof target[`on${type}`] === "function" ||
+          (target instanceof Element && target.hasAttribute(`on${type}`))
+        );
+      } catch {
+        return false;
+      }
+    });
+  };
+  const matches = (target) => {
+    const types = typesOf(target);
+    return triggerTypes.includes(wanted) ? types.includes(wanted) : types.length > 0;
+  };
+  const pathOf = (element, alwaysIndex) => {
+    const parts = [];
+    for (let current = element; current instanceof Element && current !== document.documentElement; current = current.parentElement) {
+      let part = current.tagName.toLowerCase();
+      const parent = current.parentElement;
+      if (parent && current !== document.body) {
+        const siblings = [...parent.children].filter((sibling) => sibling.tagName === current.tagName);
+        if (alwaysIndex || siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+      }
+      parts.unshift(part);
+    }
+    return parts.join(" > ");
+  };
+
+  let element = null;
+  try {
+    element = document.querySelector(selector);
+  } catch {}
+  if (!element) return { found: false };
+  if (matches(element)) return { found: true, verified: true, types: typesOf(element) };
+
+  const candidates = point ? document.elementsFromPoint(point.x, point.y) : [];
+  for (let current = element.parentElement; current; current = current.parentElement) {
+    candidates.push(current);
+  }
+  const candidate = candidates.find((item) => item !== element && matches(item));
+  if (!candidate) {
+    return {
+      found: true,
+      verified: false,
+      globalOwners: [[document, "document"], [window, "window"]]
+        .filter(([target]) => matches(target))
+        .map(([, name]) => name),
+    };
+  }
+
+  const bounds = candidate.getBoundingClientRect();
+  const zIndex = Number.parseInt(getComputedStyle(candidate).zIndex, 10);
+  const uniqueId =
+    candidate.id && document.querySelectorAll(`#${CSS.escape(candidate.id)}`).length === 1;
+  return {
+    found: true,
+    verified: false,
+    candidate: {
+      selector: uniqueId ? `#${CSS.escape(candidate.id)}` : pathOf(candidate, false),
+      path: pathOf(candidate, false),
+      displayPath: pathOf(candidate, true),
+      tag: candidate.tagName.toLowerCase(),
+      types: typesOf(candidate),
+      zIndex: Number.isFinite(zIndex) ? zIndex : null,
+      label: (
+        candidate.getAttribute("aria-label") ||
+        candidate.getAttribute("title") ||
+        candidate.textContent?.trim().replace(/\s+/g, " ") ||
+        ""
+      ).slice(0, 80),
+      width: Math.round(bounds.width),
+      height: Math.round(bounds.height),
+      frameUrl: location.href,
+    },
+  };
 }
 
 function removeDeniedClickHandlers(selector, destinationUrl, removeHandlers) {
@@ -141,7 +328,7 @@ function removeDeniedClickHandlers(selector, destinationUrl, removeHandlers) {
   const listeners = registry?.listenersByTarget.get(element);
   const removedTypes = new Set();
   const triggerTypes = removeHandlers
-    ? ["click", "auxclick", "mousedown", "mouseup", "touchstart", "touchend", "pointerdown", "pointerup"]
+    ? ["click", "auxclick", "mousedown", "mouseup", "touchstart", "touchend", "pointerdown", "pointerup", "focus", "blur"]
     : [];
   for (const type of triggerTypes) {
     for (const registration of [...(listeners?.get(type) ?? [])]) {
@@ -172,6 +359,10 @@ function removeDeniedClickHandlers(selector, destinationUrl, removeHandlers) {
   }
 
   const changed = removedTypes.size > 0 || targetRemoved;
+  if (removeHandlers && (element instanceof HTMLElement || element instanceof SVGElement)) {
+    element.style.setProperty("pointer-events", "none", "important");
+  }
+  if (removeHandlers) registry?.reapply?.add(element, "deny", { url: String(destinationUrl ?? "") });
   if (registry) {
     const deniedElements = (registry.deniedElements ??= new Map());
     const previous = deniedElements.get(element);
@@ -180,6 +371,7 @@ function removeDeniedClickHandlers(selector, destinationUrl, removeHandlers) {
       targetRemoved: Boolean(previous?.targetRemoved || targetRemoved),
       url: String(destinationUrl ?? ""),
       at: Date.now(),
+      disabled: Boolean(previous?.disabled || removeHandlers),
     });
   }
   if (!registry?.getModificationId) return { changed };
@@ -197,6 +389,7 @@ function removeDeniedClickHandlers(selector, destinationUrl, removeHandlers) {
       uid: registry.getModificationId(element),
       kind: "deny",
       selector,
+      path: registry.getElementPath?.(element) ?? "",
       tag: element.tagName.toLowerCase(),
       label: (
         element.getAttribute("aria-label") ||
@@ -297,10 +490,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   pendingTabs.delete(tabId);
   navigationStartTimes.delete(tabId);
+  lastClickSources.delete(tabId);
   clearModificationHistory(tabId);
 });
 
 async function guardCreatedDownload(item) {
+  await downloadStartupGraceReady;
+  if (Date.now() < downloadControlEnabledAt) return;
+
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const confirmDownloads = await isConfirmationEnabledForUrl(
     "downloadConfirmationRules",
@@ -323,6 +520,8 @@ async function guardCreatedDownload(item) {
         action: "show-download-confirmation",
         url: item.url,
         filename: item.filename,
+        referrer: item.referrer,
+        byExtensionId: item.byExtensionId,
       },
       { frameId: 0 }
     );
@@ -377,6 +576,7 @@ chrome.tabs.onActivated.addListener(({ tabId }) => updateBlockedBadge(tabId));
 const INSPECT_ELEMENT_MENU_ID = "resource-origins-inspect-element";
 
 chrome.runtime.onInstalled.addListener(() => {
+  suspendDownloadControlForStartup();
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: INSPECT_ELEMENT_MENU_ID,
@@ -474,7 +674,63 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((message, sender) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "remember-click-source" && sender.tab?.id) {
+    if (
+      typeof message.selector !== "string" ||
+      !message.selector ||
+      message.selector.length > 2048
+    ) {
+      return;
+    }
+    lastClickSources.set(sender.tab.id, {
+      frameId: sender.frameId ?? 0,
+      selector: message.selector,
+      snapshot:
+        message.snapshot && typeof message.snapshot === "object" ? message.snapshot : null,
+      at: Date.now(),
+    });
+    return;
+  }
+
+  if (message.action === "verify-confirmation-source" && sender.tab?.id) {
+    const frameId = Number.isInteger(message.frameId) && message.frameId >= 0 ? message.frameId : 0;
+    if (typeof message.selector !== "string" || message.selector.length > 2048) return;
+    const point =
+      Number.isFinite(message.point?.x) && Number.isFinite(message.point?.y)
+        ? { x: message.point.x, y: message.point.y }
+        : null;
+    chrome.scripting
+      .executeScript({
+        target: { tabId: sender.tab.id, frameIds: [frameId] },
+        world: "MAIN",
+        func: verifyConfirmationSource,
+        args: [message.selector, String(message.eventType ?? "").slice(0, 64), point],
+      })
+      .then(([injection]) => sendResponse(injection?.result ?? null))
+      .catch(() => sendResponse(null));
+    return true;
+  }
+
+  if (message.action === "get-last-click-source" && sender.tab?.id) {
+    const source = lastClickSources.get(sender.tab.id);
+    sendResponse(source && source.at >= Number(message.since) ? source : null);
+    return;
+  }
+
+  if (message.action === "save-reapply-rules" && sender.tab?.id) {
+    saveReapplyRules(sender.tab.id, message.frameKey, message.rules);
+    return;
+  }
+
+  if (message.action === "get-reapply-rules" && sender.tab?.id) {
+    if (typeof message.frameKey !== "string") return;
+    getReapplyRules(sender.tab.id, message.frameKey)
+      .then((rules) => sendResponse({ rules }))
+      .catch(() => sendResponse({ rules: null }));
+    return true;
+  }
+
   if (message.action === "show-confirmation-in-top" && sender.tab?.id) {
     runBestEffort(() =>
       chrome.tabs.sendMessage(
@@ -508,6 +764,8 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   }
 
   if (message.action === "record-denial" && sender.tab?.id) {
+    if (message.removeHandlers !== true) return;
+
     const tabId = sender.tab.id;
     const frameId = Number.isInteger(message.frameId) && message.frameId >= 0
       ? message.frameId

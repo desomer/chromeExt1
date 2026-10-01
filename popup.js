@@ -16,6 +16,10 @@ const BLOCKED_REQUEST_TYPES = [
   "other",
 ];
 const BLOCK_RULE_PATTERN = /^\|\|(.+)\^$/;
+const blockDateFormatter = new Intl.DateTimeFormat("fr-FR", {
+  dateStyle: "short",
+  timeStyle: "medium",
+});
 
 // Small approximation of the public suffix list, only for domains this extension is likely to see.
 const MULTI_LABEL_SUFFIXES = new Set([
@@ -303,6 +307,7 @@ function toggleElementWidthZeroFromLastScan(targetIndex) {
     }
     manualStates.delete(target);
     registry.autoDisabledElements.delete(target);
+    registry.reapply?.remove(target, "width-manual");
     return { changed: true, enabled: false, uid: registry.getModificationId?.(target) };
   }
 
@@ -320,8 +325,14 @@ function toggleElementWidthZeroFromLastScan(targetIndex) {
   };
   manualStates.set(target, state);
   registry.autoDisabledElements.set(target, state.bounds);
+  registry.reapply?.add(target, "width-manual");
   target.style.setProperty("width", "0px", "important");
-  return { changed: true, enabled: true, uid: registry.getModificationId?.(target) };
+  return {
+    changed: true,
+    enabled: true,
+    uid: registry.getModificationId?.(target),
+    path: registry.getElementPath?.(target) ?? "",
+  };
 }
 
 function toggleElementDisplayNoneFromLastScan(targetIndex) {
@@ -338,6 +349,7 @@ function toggleElementDisplayNoneFromLastScan(targetIndex) {
       target.style.removeProperty("display");
     }
     manualStates.delete(target);
+    registry.reapply?.remove(target, "hidden");
     return { changed: true, enabled: false, uid: registry.getModificationId?.(target) };
   }
 
@@ -345,8 +357,14 @@ function toggleElementDisplayNoneFromLastScan(targetIndex) {
     value: target.style.getPropertyValue("display"),
     priority: target.style.getPropertyPriority("display"),
   });
+  registry.reapply?.add(target, "hidden");
   target.style.setProperty("display", "none", "important");
-  return { changed: true, enabled: true, uid: registry.getModificationId?.(target) };
+  return {
+    changed: true,
+    enabled: true,
+    uid: registry.getModificationId?.(target),
+    path: registry.getElementPath?.(target) ?? "",
+  };
 }
 
 function inspectModifiedElements() {
@@ -409,12 +427,61 @@ function inspectModifiedElements() {
 
   const scan = [...modifications.keys()];
   if (registry) registry.lastModifiedScan = scan;
+  const getEvents = (element) => {
+    const registeredTypes = registry?.listenersByTarget.get(element);
+    const typeSet = new Set(registeredTypes?.keys() ?? []);
+    for (const attribute of element.getAttributeNames?.() ?? []) {
+      if (attribute.startsWith("on")) typeSet.add(attribute.slice(2));
+    }
+    for (const property in element) {
+      if (!property.startsWith("on")) continue;
+      try {
+        if (typeof element[property] === "function") typeSet.add(property.slice(2));
+      } catch {}
+    }
+    const types = [...typeSet].sort();
+    const eventOrigins = Object.fromEntries(
+      types.map((type) => [
+        type,
+        [
+          ...new Set(
+            (registeredTypes?.get(type) ?? [])
+              .map((registration) => registration.origin)
+              .filter(Boolean)
+          ),
+        ],
+      ])
+    );
+    return { types, eventOrigins };
+  };
+  // DevTools lists ancestor listeners too; a click handled on a parent fires for this element.
+  const getAncestorEvents = (element) => {
+    const chain = [];
+    for (let current = element.parentElement; current; current = current.parentElement) {
+      chain.push(current);
+    }
+    chain.push(document, window);
+    return chain.flatMap((target) => {
+      const { types, eventOrigins } = getEvents(target);
+      if (!types.length) return [];
+      const label =
+        target === window
+          ? "window"
+          : target === document
+            ? "document"
+            : `${target.tagName.toLowerCase()}${target.id ? `#${target.id}` : ""}`;
+      return [{ target: label, types, eventOrigins }];
+    });
+  };
   return {
     instrumentationActive: Boolean(registry),
     elements: scan.map((element, targetIndex) => {
       const bounds = element.getBoundingClientRect();
       return {
+        ...getEvents(element),
+        ancestorEvents: getAncestorEvents(element),
         uid: registry?.getModificationId?.(element) ?? "",
+        path: registry?.getElementPath?.(element) ?? "",
         tag: element.tagName.toLowerCase(),
         targetKind: "element",
         targetIndex,
@@ -567,7 +634,7 @@ function removeTriggerEventsFromLastScan() {
   return { elementsAffected, listenersRemoved, inlineHandlersRemoved };
 }
 
-function removeEventFromLastScan(targetIndex, eventType) {
+function removeEventFromLastScan(targetIndex, eventType, scanKey = "lastScan") {
   const registry = window[Symbol.for("resource-origins.listener-registry")];
   const allowedTypes = new Set([
     "mousedown",
@@ -576,8 +643,8 @@ function removeEventFromLastScan(targetIndex, eventType) {
     "click",
     "contextmenu",
   ]);
-  const target = registry?.lastScan?.[targetIndex];
-  if (!target || !allowedTypes.has(eventType)) {
+  const target = registry?.[scanKey]?.[targetIndex];
+  if (!target || (scanKey === "lastScan" && !allowedTypes.has(eventType))) {
     return { listenersRemoved: 0, inlineHandlersRemoved: 0 };
   }
 //   if (target instanceof Element && target.tagName === "VIDEO") {
@@ -895,13 +962,19 @@ const reputationProviders = [
 
 let pageData = null;
 let blockingRules = new Map();
+let blockedOriginTimestamps = {};
 let domainReputations = new Map();
 let reputationRequestId = 0;
 let elementsScanned = false;
 let activeTabId = null;
 
 async function loadBlockingRules() {
-  let rules = await chrome.declarativeNetRequest.getDynamicRules();
+  const [dynamicRules, storedTimestamps] = await Promise.all([
+    chrome.declarativeNetRequest.getDynamicRules(),
+    chrome.storage.local.get({ blockedOriginTimestamps: {} }),
+  ]);
+  let rules = dynamicRules;
+  blockedOriginTimestamps = storedTimestamps.blockedOriginTimestamps;
   const outdatedRules = rules.filter((rule) => {
     const isOriginBlock =
       rule.action.type === "block" &&
@@ -949,6 +1022,7 @@ async function toggleBlockedOrigin(origin, button) {
         removeRuleIds: [existingRule.id],
       });
       blockingRules.delete(hostname);
+      delete blockedOriginTimestamps[hostname];
     } else {
       const rules = await chrome.declarativeNetRequest.getDynamicRules();
       const rule = {
@@ -962,7 +1036,9 @@ async function toggleBlockedOrigin(origin, button) {
       };
       await chrome.declarativeNetRequest.updateDynamicRules({ addRules: [rule] });
       blockingRules.set(hostname, rule);
+      blockedOriginTimestamps[hostname] = Date.now();
     }
+    await chrome.storage.local.set({ blockedOriginTimestamps });
 
     renderResults(document.querySelector("#search").value);
     if (activeTabId != null) {
@@ -989,6 +1065,12 @@ function createReputationIndicator(provider, result) {
   indicator.title = result.title || `${label}: ${result.label}`;
   indicator.dataset.provider = key;
   return indicator;
+}
+
+function formatBlockDate(timestamp) {
+  return Number.isFinite(timestamp)
+    ? blockDateFormatter.format(new Date(timestamp))
+    : "Date inconnue";
 }
 
 function renderResults(query = "") {
@@ -1065,7 +1147,16 @@ function renderResults(query = "") {
       };
       reputationBadges.append(createReputationIndicator(provider, result));
     }
-    heading.append(hostname, badges, reputationBadges);
+    heading.append(hostname);
+    if (isBlocked) {
+      const blockDate = document.createElement("span");
+      blockDate.className = "origin-block-date";
+      blockDate.textContent = `Bloqué le ${formatBlockDate(
+        blockedOriginTimestamps[groupHostname]
+      )}`;
+      heading.append(blockDate);
+    }
+    heading.append(badges, reputationBadges);
 
     const actions = document.createElement("span");
     actions.className = "origin-actions";
@@ -1650,41 +1741,44 @@ function renderPointerElements(scan) {
     selector.textContent = element.selector;
     selector.title = element.selector;
 
-    const events = document.createElement("div");
-    events.className = "element-events";
-    for (const type of element.types.length ? element.types : ["aucun déclencheur"] ) {
-      const badge = document.createElement("span");
-      badge.textContent = type;
-      if (!element.types.length) {
-        badge.className = "no-event";
-      } else {
-        const origins = element.eventOrigins?.[type] ?? [];
-        badge.title = origins.length
-          ? origins.join("\n")
-          : "Origine indisponible (gestionnaire inline ou listener non instrumenté).";
-        const removeButton = document.createElement("button");
-        removeButton.className = "event-remove-button";
-        removeButton.type = "button";
-        removeButton.textContent = "×";
-        removeButton.title = `Retirer l’événement ${type}`;
-        removeButton.setAttribute("aria-label", `Retirer l’événement ${type}`);
-        removeButton.addEventListener("click", () =>
-          removeSingleEvent(element, type, removeButton)
-        );
-        badge.append(removeButton);
-      }
-      events.append(badge);
-    }
-
     row.append(frame, selector);
     if (element.label) {
       const label = document.createElement("p");
       label.textContent = element.label;
       row.append(label);
     }
-    row.append(events);
+    row.append(createEventBadges(element));
     results.append(row);
   }
+}
+
+function createEventBadges(element) {
+  const events = document.createElement("div");
+  events.className = "element-events";
+  for (const type of element.types.length ? element.types : ["aucun déclencheur"]) {
+    const badge = document.createElement("span");
+    badge.textContent = type;
+    if (!element.types.length) {
+      badge.className = "no-event";
+    } else {
+      const origins = element.eventOrigins?.[type] ?? [];
+      badge.title = origins.length
+        ? origins.join("\n")
+        : "Origine indisponible (gestionnaire inline ou listener non instrumenté).";
+      const removeButton = document.createElement("button");
+      removeButton.className = "event-remove-button";
+      removeButton.type = "button";
+      removeButton.textContent = "×";
+      removeButton.title = `Retirer l’événement ${type}`;
+      removeButton.setAttribute("aria-label", `Retirer l’événement ${type}`);
+      removeButton.addEventListener("click", () =>
+        removeSingleEvent(element, type, removeButton)
+      );
+      badge.append(removeButton);
+    }
+    events.append(badge);
+  }
+  return events;
 }
 
 function highlightPointerElement(element, enabled) {
@@ -1714,6 +1808,10 @@ function highlightPointerElement(element, enabled) {
 }
 
 async function removeSingleEvent(element, eventType, button) {
+  const scanKey = element.scanKey ?? "lastScan";
+  const inModifiedTab = scanKey === "lastModifiedScan";
+  const status = () =>
+    document.querySelector(inModifiedTab ? "#modified-status" : "#elements-status");
   button.disabled = true;
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -1721,17 +1819,17 @@ async function removeSingleEvent(element, eventType, button) {
       target: { tabId: tab.id, frameIds: [element.frameId] },
       world: "MAIN",
       func: removeEventFromLastScan,
-      args: [element.targetIndex, eventType],
+      args: [element.targetIndex, eventType, scanKey],
     });
     const removed = result.listenersRemoved + result.inlineHandlersRemoved;
-    await scanPointerElements();
-    document.querySelector("#elements-status").textContent = `${removed} gestionnaire${
+    if (inModifiedTab) await scanModifiedElements();
+    else await scanPointerElements();
+    status().textContent = `${removed} gestionnaire${
       removed > 1 ? "s" : ""
     } ${eventType} retiré${removed > 1 ? "s" : ""}.`;
   } catch {
     button.disabled = false;
-    document.querySelector("#elements-status").textContent =
-      `Impossible de retirer l’événement ${eventType}.`;
+    status().textContent = `Impossible de retirer l’événement ${eventType}.`;
   }
 }
 
@@ -1857,6 +1955,7 @@ function syncModificationHistory(element, kind, result) {
           uid: result.uid,
           kind,
           selector: element.selector,
+          path: result.path,
           tag: element.tag,
           label: element.label,
           width: element.width,
@@ -1877,6 +1976,7 @@ function mergeModificationHistory(liveElements, history) {
 
     const element = goneElements.get(entry.uid) ?? {
       uid: entry.uid,
+      path: entry.path,
       tag: entry.tag,
       targetKind: "element",
       selector: entry.selector,
@@ -1898,7 +1998,58 @@ function mergeModificationHistory(liveElements, history) {
     });
     goneElements.set(entry.uid, element);
   }
-  return [...liveElements, ...goneElements.values()];
+  return groupModifiedElementsByPath([...liveElements, ...goneElements.values()]);
+}
+
+// Each recreated node has its own id; one row per frame + DOM path is what the user expects.
+function groupModifiedElementsByPath(elements) {
+  const groups = new Map();
+  const result = [];
+  for (const element of elements) {
+    let frameKey = element.frameUrl ?? "";
+    try {
+      const url = new URL(frameKey);
+      frameKey = `${url.origin}${url.pathname}`;
+    } catch {}
+    const groupKey = element.path ? `${frameKey}|${element.path}` : null;
+    const group = groupKey && groups.get(groupKey);
+    if (!group) {
+      const copy = { ...element, modifications: [] };
+      if (groupKey) groups.set(groupKey, copy);
+      result.push(copy);
+      mergeModifications(copy, element.modifications);
+      continue;
+    }
+
+    // Prefer the live node for highlighting and current size.
+    if (group.gone && !element.gone) {
+      const { modifications } = group;
+      Object.assign(group, element, { modifications });
+    }
+    mergeModifications(group, element.modifications);
+  }
+  return result;
+}
+
+function mergeModifications(target, modifications) {
+  for (const modification of modifications) {
+    const existing = target.modifications.find((item) => item.kind === modification.kind);
+    const urls = modification.urls ?? (modification.url ? [modification.url] : []);
+    if (!existing) {
+      target.modifications.push({
+        ...modification,
+        types: [...(modification.types ?? [])],
+        urls: [...new Set(urls)],
+        count: 1,
+      });
+      continue;
+    }
+    existing.types = [...new Set([...existing.types, ...(modification.types ?? [])])];
+    existing.targetRemoved ||= modification.targetRemoved;
+    existing.urls = [...new Set([...existing.urls, ...urls])];
+    existing.at = Math.max(existing.at ?? 0, modification.at ?? 0);
+    existing.count += 1;
+  }
 }
 
 const modificationLabels = {
@@ -1956,11 +2107,13 @@ function renderModifiedElements(scan) {
     for (const modification of element.modifications) {
       const badge = document.createElement("span");
       badge.className = "modification-badge";
-      badge.textContent = modificationLabels[modification.kind] ?? modification.kind;
+      badge.textContent = `${modificationLabels[modification.kind] ?? modification.kind}${
+        modification.count > 1 ? ` ×${modification.count}` : ""
+      }`;
       if (modification.kind === "deny") {
         const details = [...(modification.types ?? [])];
         if (modification.targetRemoved) details.push("attribut target");
-        if (modification.url) destinations.add(modification.url);
+        for (const url of modification.urls ?? []) destinations.add(url);
         badge.title = `${
           details.length ? `Retiré : ${details.join(", ")}` : "Aucun gestionnaire retiré"
         }\n${new Date(modification.at).toLocaleTimeString("fr-FR")}`;
@@ -2001,6 +2154,44 @@ function renderModifiedElements(scan) {
       const label = document.createElement("p");
       label.textContent = element.label;
       row.append(label);
+    }
+    if (!element.gone && Array.isArray(element.types)) row.append(createEventBadges(element));
+    const ancestors = element.ancestorEvents ?? [];
+    if (ancestors.length) {
+      const ancestorsPanel = document.createElement("div");
+      ancestorsPanel.hidden = true;
+      const toggle = document.createElement("button");
+      toggle.className = "ancestors-toggle";
+      toggle.type = "button";
+      const label = (open) =>
+        `${open ? "Masquer" : "Afficher"} les parents avec événements (${ancestors.length})`;
+      toggle.textContent = label(false);
+      toggle.setAttribute("aria-expanded", "false");
+      toggle.addEventListener("click", (event) => {
+        event.stopPropagation();
+        ancestorsPanel.hidden = !ancestorsPanel.hidden;
+        toggle.textContent = label(!ancestorsPanel.hidden);
+        toggle.setAttribute("aria-expanded", String(!ancestorsPanel.hidden));
+      });
+      row.append(toggle, ancestorsPanel);
+
+      for (const ancestor of ancestors) {
+        const inherited = document.createElement("div");
+        inherited.className = "element-events inherited-events";
+        const owner = document.createElement("strong");
+        owner.textContent = `↑ ${ancestor.target}`;
+        inherited.append(owner);
+        for (const type of ancestor.types) {
+          const badge = document.createElement("span");
+          badge.textContent = type;
+          const origins = ancestor.eventOrigins?.[type] ?? [];
+          badge.title = origins.length
+            ? origins.join("\n")
+            : "Origine indisponible (gestionnaire inline ou listener non instrumenté).";
+          inherited.append(badge);
+        }
+        ancestorsPanel.append(inherited);
+      }
     }
     results.append(row);
   }

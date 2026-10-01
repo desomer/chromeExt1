@@ -11,6 +11,8 @@
     "declarativeNetRequest",
     "declarativeNetRequestFeedback",
     "downloads",
+    "alarms",
+    "offscreen",
     "storage",
     "tabs",
     "windows",

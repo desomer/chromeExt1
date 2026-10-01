@@ -27,6 +27,23 @@ window.addEventListener("message", (event) => {
     }
     if (data.action !== "show") return;
 
+    const requesterLabel = document.querySelector("#requester-label");
+    const requester = document.querySelector("#requester");
+    if (typeof data.referrer === "string" && data.referrer) {
+      try {
+        requester.textContent = new URL(data.referrer).host || data.referrer;
+      } catch {
+        requester.textContent = data.referrer;
+      }
+      requesterLabel.textContent = "Site demandeur";
+    } else if (typeof data.byExtensionId === "string" && data.byExtensionId) {
+      requester.textContent = data.byExtensionId;
+      requesterLabel.textContent = "Extension demandeuse";
+    } else {
+      requester.textContent = "Origine non communiquée (logiciel ou téléchargement direct)";
+      requesterLabel.textContent = "Demandeur";
+    }
+    requester.title = requester.textContent;
     document.querySelector("#hostname").textContent = data.filename || "Fichier";
     document.querySelector("#url").textContent = data.url;
     document.querySelector("#url").title = data.url;

@@ -23,7 +23,7 @@ async function ensurePrompt() {
       promptHost = document.createElement("div");
       promptHost.id = "DialogResOrigineDownload";
       promptHost.style.cssText =
-        "position:fixed;top:16px;right:16px;z-index:2147483647;display:none;width:400px;height:218px;color-scheme: light;";
+        "position:fixed;top:16px;right:16px;z-index:2147483647;display:none;width:400px;height:238px;color-scheme: light;";
 
       const shadowRoot = promptHost.attachShadow({ mode: "closed" });
       const frame = document.createElement("iframe");
@@ -79,6 +79,8 @@ async function showNextConfirmation() {
     action: "show",
     url: currentConfirmation.url,
     filename: currentConfirmation.filename,
+    referrer: currentConfirmation.referrer,
+    byExtensionId: currentConfirmation.byExtensionId,
     pendingCount: confirmationQueue.length + 1,
   });
 }
@@ -100,8 +102,8 @@ function handlePromptResponse(event) {
   showNextConfirmation();
 }
 
-function requestConfirmation(url, filename) {
-  confirmationQueue.push({ url, filename });
+function requestConfirmation(url, filename, referrer, byExtensionId) {
+  confirmationQueue.push({ url, filename, referrer, byExtensionId });
   if (currentConfirmation) {
     updatePendingCount();
   } else {
@@ -113,6 +115,13 @@ function requestConfirmation(url, filename) {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.action !== "show-download-confirmation") return;
 
-  sendResponse({ shown: requestConfirmation(message.url, message.filename) });
+  sendResponse({
+    shown: requestConfirmation(
+      message.url,
+      message.filename,
+      message.referrer,
+      message.byExtensionId
+    ),
+  });
 });
 })();

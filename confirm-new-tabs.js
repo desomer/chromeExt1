@@ -16,7 +16,13 @@ const PROMPT_SOURCE = "resource-origins-tab-prompt";
 const confirmationQueue = [];
 let currentConfirmation = null;
 let trustedClickSource = null;
+let trustedClickSourceType = "";
 let trustedClickSourceTimeoutId = null;
+let lastReportedClick = { element: null, at: 0 };
+let listenerOwner = { timeStamp: null, element: null };
+let lastTrustedClickStamp = null;
+let pendingOpenSource = null;
+let trustedClickPoint = null;
 let promptHost = null;
 let promptPort = null;
 let promptReady = null;
@@ -169,6 +175,31 @@ window.addEventListener("resource-origins:element-restored", (event) => {
   }
 });
 
+const reapplyFrameKey = `${location.origin}${location.pathname}`;
+
+window.addEventListener("resource-origins:reapply-rules-changed", (event) => {
+  if (typeof event.detail !== "string") return;
+  sendMessageBestEffort({
+    action: "save-reapply-rules",
+    frameKey: reapplyFrameKey,
+    rules: event.detail,
+  });
+});
+
+try {
+  chrome.runtime
+    .sendMessage({ action: "get-reapply-rules", frameKey: reapplyFrameKey })
+    .then((response) => {
+      if (typeof response?.rules !== "string") return;
+      window.dispatchEvent(
+        new CustomEvent("resource-origins:reapply-rules-restore", { detail: response.rules })
+      );
+    })
+    .catch(() => {});
+} catch {
+  // The extension may have been reloaded while this page stayed open.
+}
+
 function getFrameDepth() {
   let depth = 0;
   let currentWindow = window;
@@ -299,7 +330,7 @@ async function ensurePrompt() {
       promptHost = document.createElement("div");
       promptHost.id = "DialogResOrigine";
       promptHost.style.cssText =
-        "position:fixed;top:16px;right:16px;z-index:2147483647;display:none;width:400px;height:270px;color-scheme: light;";
+        "position:fixed;top:16px;right:16px;z-index:2147483647;display:none;width:400px;height:350px;color-scheme: light;";
 
       const shadowRoot = promptHost.attachShadow({ mode: "closed" });
       const frame = document.createElement("iframe");
@@ -334,6 +365,57 @@ async function ensurePrompt() {
   return promptReady;
 }
 
+// The click may have happened in another frame, or before an async window.open.
+async function fillSourceFromLastClick(confirmation) {
+  try {
+    const source = await chrome.runtime.sendMessage({
+      action: "get-last-click-source",
+      since: confirmation.enqueuedAt - 5000,
+    });
+    if (typeof source?.selector === "string" && source.selector) {
+      confirmation.sourceSelector = source.selector;
+      confirmation.sourceSnapshot = source.snapshot ?? null;
+      confirmation.sourceFrameId = source.frameId ?? 0;
+    }
+  } catch {
+    // Keep a plain deny when the background is unavailable.
+  }
+}
+
+// Checked in the page world of the source frame, where the listener registry lives.
+async function verifyConfirmationSource(confirmation) {
+  const eventType = confirmation.sourceSnapshot?.eventType ?? "";
+  try {
+    const result = await chrome.runtime.sendMessage({
+      action: "verify-confirmation-source",
+      frameId: confirmation.sourceFrameId ?? 0,
+      selector: confirmation.sourceSelector,
+      eventType,
+      point: confirmation.sourceSnapshot?.point ?? null,
+    });
+    if (!result) return "";
+    if (!result.found) return "⚠ Élément introuvable dans la page";
+    if (result.verified) return `✓ ${result.types.join(", ")} présent sur l’élément`;
+
+    const wanted = eventType.replace(" (script)", "") || "écouteur";
+    if (result.candidate) {
+      const { candidate } = result;
+      confirmation.sourceSelector = candidate.selector;
+      confirmation.sourceSnapshot = {
+        ...candidate,
+        eventType,
+        point: confirmation.sourceSnapshot?.point ?? null,
+      };
+      const zIndex = candidate.zIndex !== null ? ` (z-index ${candidate.zIndex})` : "";
+      return `⚠ Aucun ${wanted} sur l’élément cliqué → remplacé par <${candidate.tag}>${zIndex} qui a ${candidate.types.join(", ")}`;
+    }
+    const globalOwners = result.globalOwners.length ? ` (présent sur ${result.globalOwners.join(", ")})` : "";
+    return `⚠ Aucun ${wanted} trouvé sur l’élément ni sous le clic${globalOwners}`;
+  } catch {
+    return "";
+  }
+}
+
 async function showNextConfirmation() {
   if (currentConfirmation || !confirmationQueue.length) return;
 
@@ -341,6 +423,16 @@ async function showNextConfirmation() {
   if (currentConfirmation || !confirmationQueue.length) return;
 
   currentConfirmation = confirmationQueue.shift();
+  const confirmation = currentConfirmation;
+  if (!confirmation.sourceSelector) {
+    await fillSourceFromLastClick(confirmation);
+    if (currentConfirmation !== confirmation) return;
+  }
+  let sourceCheck = "";
+  if (confirmation.sourceSelector) {
+    sourceCheck = await verifyConfirmationSource(confirmation);
+    if (currentConfirmation !== confirmation) return;
+  }
   promptHost.style.display = "block";
   highlightConfirmationSource(
     currentConfirmation.sourceFrameId,
@@ -353,6 +445,14 @@ async function showNextConfirmation() {
     expiresAt: currentConfirmation.expiresAt,
     message: currentConfirmation.message,
     removeTriggerOnDeny: Boolean(currentConfirmation.sourceSelector),
+    sourcePath:
+      currentConfirmation.sourceSnapshot?.displayPath ||
+      currentConfirmation.sourceSnapshot?.path ||
+      currentConfirmation.sourceSelector ||
+      "",
+    sourceTag: currentConfirmation.sourceSnapshot?.tag || "",
+    sourceEvent: currentConfirmation.sourceSnapshot?.eventType || "",
+    sourceCheck,
   });
 }
 
@@ -548,10 +648,17 @@ function requestConfirmation(url, active = true, options = {}) {
 
 window.addEventListener(REQUEST_EVENT, (event) => {
   if (event.detail && typeof event.detail === "object") {
+    const source =
+      pendingOpenSource ?? findElement(event.detail.sourceSelector) ?? trustedClickSource;
+    pendingOpenSource = null;
     requestConfirmation(event.detail.url, event.detail.active, {
       newWindow: event.detail.newWindow === true,
       popup: event.detail.popup === true,
-      ...getSourceOptions(findElement(event.detail.sourceSelector) ?? trustedClickSource),
+      ...getSourceOptions(
+        source,
+        (typeof event.detail.eventType === "string" && event.detail.eventType) ||
+          trustedClickSourceType
+      ),
       message: event.detail.newWindow
         ? "This site wants to open a new window"
         : undefined,
@@ -565,7 +672,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // Tabs detected by the background carry no source; fall back to the last click here.
   const source = message.sourceSelector
     ? { sourceSelector: message.sourceSelector, sourceSnapshot: message.sourceSnapshot ?? null }
-    : getSourceOptions(trustedClickSource);
+    : getSourceOptions(trustedClickSource, trustedClickSourceType);
   sendResponse({
     shown: requestConfirmation(message.url, message.active, {
       newWindow: message.newWindow === true,
@@ -603,18 +710,25 @@ function getLinkTarget(link) {
 
 function getElementSelector(element) {
   if (!(element instanceof Element)) return "";
-  if (element.id) return `#${CSS.escape(element.id)}`;
+  if (element.id && document.querySelectorAll(`#${CSS.escape(element.id)}`).length === 1) {
+    return `#${CSS.escape(element.id)}`;
+  }
+  return getElementPath(element);
+}
 
+function getElementPath(element, alwaysIndex = false) {
   const parts = [];
   let current = element;
   while (current instanceof Element && current !== document.documentElement) {
     let part = current.tagName.toLowerCase();
     const parent = current.parentElement;
-    if (parent) {
+    if (parent && current !== document.body) {
       const siblings = [...parent.children].filter(
         (sibling) => sibling.tagName === current.tagName
       );
-      if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+      if (alwaysIndex || siblings.length > 1) {
+        part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+      }
     }
     parts.unshift(part);
     current = parent;
@@ -624,16 +738,69 @@ function getElementSelector(element) {
 
 function rememberTrustedClickSource(event) {
   if (!event.isTrusted) return;
-  trustedClickSource = event.composedPath().find((item) => item instanceof Element) ?? null;
+  if (event.type === "keydown" && !["Enter", " "].includes(event.key)) return;
+  lastTrustedClickStamp = event.timeStamp;
+  const pointer = event.touches?.[0] ?? event;
+  trustedClickPoint =
+    Number.isFinite(pointer.clientX) && event.type !== "keydown"
+      ? { x: pointer.clientX, y: pointer.clientY }
+      : null;
+  const source =
+    listenerOwner.timeStamp === event.timeStamp
+      ? listenerOwner.element
+      : event.composedPath().find((item) => item instanceof Element) ?? null;
+  setTrustedClickSource(source, event.type);
+}
+
+// The page-world script dispatches these on the element itself, so event.target is the node.
+window.addEventListener(
+  "resource-origins:click-owner",
+  (event) => {
+    const element = event.target;
+    if (!(element instanceof Element) || typeof event.detail !== "number") return;
+    listenerOwner = { timeStamp: event.detail, element };
+    if (lastTrustedClickStamp === event.detail && trustedClickSource !== element) {
+      setTrustedClickSource(element, trustedClickSourceType);
+    }
+  },
+  true
+);
+
+window.addEventListener(
+  "resource-origins:open-source",
+  (event) => {
+    if (event.target instanceof Element) pendingOpenSource = event.target;
+  },
+  true
+);
+
+function setTrustedClickSource(source, type) {
+  trustedClickSource = source;
+  trustedClickSourceType = type;
   window.clearTimeout(trustedClickSourceTimeoutId);
   // Keeps the source for handlers that call window.open asynchronously after the gesture.
   trustedClickSourceTimeoutId = window.setTimeout(() => {
     trustedClickSource = null;
+    trustedClickSourceType = "";
   }, 1000);
+
+  const now = Date.now();
+  if (
+    trustedClickSource &&
+    (trustedClickSource !== lastReportedClick.element || now - lastReportedClick.at > 500)
+  ) {
+    lastReportedClick = { element: trustedClickSource, at: now };
+    const { sourceSelector, sourceSnapshot } = getSourceOptions(trustedClickSource, type);
+    sendMessageBestEffort({
+      action: "remember-click-source",
+      selector: sourceSelector,
+      snapshot: sourceSnapshot,
+    });
+  }
 }
 
 // Captured immediately: overlays often remove themselves right after the click.
-function getSourceOptions(element) {
+function getSourceOptions(element, eventType = "") {
   if (!(element instanceof Element)) return { sourceSelector: "", sourceSnapshot: null };
 
   const bounds = element.getBoundingClientRect();
@@ -642,6 +809,10 @@ function getSourceOptions(element) {
     sourceSelector: selector,
     sourceSnapshot: {
       selector,
+      eventType: typeof eventType === "string" ? eventType.slice(0, 64) : "",
+      point: trustedClickPoint,
+      path: getElementPath(element),
+      displayPath: getElementPath(element, true),
       tag: element.tagName.toLowerCase(),
       label: (
         element.getAttribute("aria-label") ||
@@ -703,7 +874,10 @@ function confirmNewTab(event) {
       destination.href,
       !(event.ctrlKey || event.metaKey || event.button === 1),
       {
-        ...getSourceOptions(event.isTrusted ? link : trustedClickSource),
+        ...getSourceOptions(
+          event.isTrusted ? link : trustedClickSource,
+          event.isTrusted ? event.type : `${event.type} (script)`
+        ),
         ...(opensNewWindow
           ? { newWindow: true, message: "This link wants to open a new window" }
           : {}),
@@ -722,12 +896,15 @@ function confirmNewTab(event) {
     requestConfirmation(destination.href, true, {
       mode: "same-tab",
       message: "This link leads to a different domain",
-      ...getSourceOptions(event.isTrusted ? link : trustedClickSource),
+      ...getSourceOptions(
+        event.isTrusted ? link : trustedClickSource,
+        event.isTrusted ? event.type : `${event.type} (script)`
+      ),
     });
   }
 }
 
-for (const type of ["click", "auxclick", "mousedown", "pointerdown", "touchstart"]) {
+for (const type of ["click", "auxclick", "mousedown", "pointerdown", "touchstart", "keydown"]) {
   window.addEventListener(type, rememberTrustedClickSource, true);
 }
 document.addEventListener("click", confirmNewTab, true);

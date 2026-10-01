@@ -17,11 +17,23 @@
       </div>
       <strong id="hostname">Destination</strong>
       <span id="url"></span>
+      <code id="source-path" hidden></code>
+      <code id="source-event" hidden></code>
+      <span id="source-check" hidden></span>
       <div class="actions">
         <button id="always-allow-to" class="secondary" type="button">
           Destination always allow
         </button>
-        <button id="deny" class="secondary" type="button">Deny</button>
+        <button id="deny" class="secondary" type="button" title="Deny this request">Deny</button>
+        <button
+          id="deny-disable"
+          class="secondary"
+          type="button"
+          title="Deny and remove click handlers from the source element"
+          hidden
+        >
+          Deny &amp; disable
+        </button>
         <button id="allow" class="primary" type="button">Allow</button>
         <button id="always-allow-from" class="secondary" type="button">
           All allow from domain
