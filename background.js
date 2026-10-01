@@ -106,6 +106,23 @@ function isWebUrl(value) {
 
 const MONITORED_RESOURCES_KEY_PREFIX = "monitored-resources:";
 const MAX_MONITORED_RESOURCES_PER_TAB = 200;
+const ORIGIN_BLOCK_RULE_PATTERN = /^\|\|(.+)\^$/;
+const RISK_POPUP_BLOCKED_REQUEST_TYPES = [
+  "sub_frame",
+  "stylesheet",
+  "script",
+  "image",
+  "font",
+  "object",
+  "xmlhttprequest",
+  "ping",
+  "csp_report",
+  "media",
+  "websocket",
+  "webtransport",
+  "webbundle",
+  "other",
+];
 let monitoredResourceWriteQueue = Promise.resolve();
 
 function rememberMonitoredResources(tabId, resources, requesterDomain, frameId) {
@@ -145,6 +162,23 @@ function clearMonitoredResources(tabId) {
   );
   monitoredResourceWriteQueue = operation.catch(() => {});
   return operation;
+}
+
+function getBlockedOriginHostnames(rules) {
+  return rules.flatMap((rule) => {
+    if (rule.action.type !== "block") return [];
+    const match = rule.condition.urlFilter?.match(ORIGIN_BLOCK_RULE_PATTERN);
+    return match ? [match[1].toLowerCase()] : [];
+  });
+}
+
+function isHostnameBlockedByRules(hostname, blockedHostnames) {
+  const normalizedHostname = hostname.toLowerCase();
+  return blockedHostnames.some(
+    (blockedHostname) =>
+      normalizedHostname === blockedHostname ||
+      normalizedHostname.endsWith(`.${blockedHostname}`)
+  );
 }
 
 chrome.webNavigation.onCommitted.addListener(({ tabId, frameId }) => {
@@ -822,6 +856,58 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "block-risk-domain") {
+    if (!Number.isInteger(sender.tab?.id) || (sender.frameId ?? 0) !== 0) {
+      sendResponse({ ok: false, reason: "request must come from a tab's top frame" });
+      return;
+    }
+
+    let hostname;
+    try {
+      const parsedUrl = new URL(`https://${String(message.hostname ?? "")}`);
+      if (parsedUrl.pathname !== "/" || parsedUrl.search || parsedUrl.hash) {
+        throw new Error("Expected a hostname only");
+      }
+      hostname = parsedUrl.hostname.toLowerCase().replace(/\.$/, "");
+      if (!hostname) throw new Error("Empty hostname");
+    } catch {
+      sendResponse({ ok: false, reason: "invalid hostname" });
+      return;
+    }
+
+    (async () => {
+      const rules = await chrome.declarativeNetRequest.getDynamicRules();
+      if (isHostnameBlockedByRules(hostname, getBlockedOriginHostnames(rules))) {
+        return { ok: true, alreadyBlocked: true, hostname };
+      }
+
+      const rule = {
+        id: Math.max(0, ...rules.map(({ id }) => id)) + 1,
+        priority: 1,
+        action: { type: "block" },
+        condition: {
+          urlFilter: `||${hostname}^`,
+          resourceTypes: RISK_POPUP_BLOCKED_REQUEST_TYPES,
+        },
+      };
+      await chrome.declarativeNetRequest.updateDynamicRules({ addRules: [rule] });
+
+      const { blockedOriginTimestamps = {} } = await chrome.storage.local.get({
+        blockedOriginTimestamps: {},
+      });
+      blockedOriginTimestamps[hostname] = Date.now();
+      await chrome.storage.local.set({ blockedOriginTimestamps });
+      await updateBlockedBadge(sender.tab.id);
+      return { ok: true, alreadyBlocked: false, hostname };
+    })()
+      .then(sendResponse)
+      .catch((error) => {
+        console.error("[Resource Origins EasyList] could not block risk domain", hostname, error);
+        sendResponse({ ok: false, reason: error?.message ?? String(error) });
+      });
+    return true;
+  }
+
   if (message.action === "evaluate-new-resources" && Number.isInteger(sender.tab?.id)) {
     const logPrefix = "[Resource Origins EasyList]";
     const requesterUrl = isWebUrl(sender.url) ? sender.url : message.requesterUrl;
@@ -883,12 +969,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         matches: evaluation.matchedCount,
       });
 
-      return resources.flatMap((resource) => {
+      const dynamicRules = await chrome.declarativeNetRequest.getDynamicRules();
+      const blockedHostnames = getBlockedOriginHostnames(dynamicRules);
+      const easyListMatches = resources.flatMap((resource) => {
         const result = evaluation.results.get(`${resource.type}\u0000${resource.url}`);
         return result?.matched
           ? [{ ...resource, filter: result.filter, stale: list.stale }]
           : [];
       });
+      const riskPopupMatches = easyListMatches.filter((match) =>
+        !isHostnameBlockedByRules(new URL(match.url).hostname, blockedHostnames)
+      );
+      console.info(`${logPrefix} filtered blocked domains from risk popup`, {
+        easyListMatches: easyListMatches.length,
+        shown: riskPopupMatches.length,
+        filtered: easyListMatches.length - riskPopupMatches.length,
+      });
+      return riskPopupMatches;
     })()
       .then((matches) => {
         console.info(`${logPrefix} returning matches to content script`, matches.length);

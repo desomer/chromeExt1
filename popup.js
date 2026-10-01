@@ -129,12 +129,22 @@ document.querySelector("#search").addEventListener("input", (event) => {
 document.querySelector("#check-reputation").addEventListener("click", checkDomainReputations);
 
 const headerAction = document.querySelector("#refresh");
+const reloadPageAction = document.querySelector("#reload-page");
 const domainSettingsAction = document.querySelector("#open-domain-settings");
 headerAction.addEventListener("click", () => {
   const activeTab = document.querySelector('[role="tab"][aria-selected="true"]');
   if (activeTab?.id === "elements-tab") scanPointerElements();
   else if (activeTab?.id === "modified-tab") scanModifiedElements();
   else scanActiveTab();
+});
+reloadPageAction.addEventListener("click", async () => {
+  if (activeTabId == null) return;
+  reloadPageAction.disabled = true;
+  try {
+    await chrome.tabs.reload(activeTabId);
+  } catch {
+    reloadPageAction.disabled = false;
+  }
 });
 domainSettingsAction.addEventListener("click", () => {
   chrome.runtime.openOptionsPage();

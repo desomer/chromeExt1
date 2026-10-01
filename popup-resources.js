@@ -160,6 +160,7 @@ async function toggleBlockedOrigin(origin, button) {
     }
     await chrome.storage.local.set({ blockedOriginTimestamps });
 
+    document.querySelector("#reload-page").hidden = false;
     updateSummary();
     renderResults(document.querySelector("#search").value);
     if (activeTabId != null) {

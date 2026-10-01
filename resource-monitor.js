@@ -124,10 +124,14 @@
       .count { flex:none; color:#ffcf87; font-size:11px; }
       button { width:28px; height:28px; flex:none; padding:0; color:#edf2f7; background:transparent; border:0; border-radius:3px; cursor:pointer; font:20px/1 system-ui,sans-serif; }
       button:hover { background:#344351; }
+      .refresh-page-button { width:auto; padding:4px 8px; font:600 11px/1.3 system-ui,sans-serif; }
       ul { display:grid; gap:1px; max-height:calc(70vh - 55px); margin:0; padding:0; overflow:auto; list-style:none; }
       li { min-width:0; padding:10px 14px; border-bottom:1px solid #303d49; }
       .resource { display:block; overflow-wrap:anywhere; color:#f3f5f7; font:12px/1.4 ui-monospace,monospace; }
       .filter { display:block; margin-top:4px; overflow-wrap:anywhere; color:#ffcf87; font-size:11px; }
+      .block-domain-button { width:auto; height:auto; margin-top:7px; padding:4px 8px; color:#ffcf87; background:#352b1e; font:600 11px/1.3 system-ui,sans-serif; }
+      .block-domain-button:hover { background:#4b3822; }
+      button:disabled { cursor:default; opacity:.7; }
       .overflow { padding:8px 14px; color:#b8c4ce; font-size:11px; }
       @media (max-width:480px) { .panel { width:calc(100vw - 24px); } }
     `;
@@ -149,7 +153,13 @@
     closeButton.addEventListener("click", () => {
       panelHost.style.setProperty("display", "none", "important");
     });
-    header.append(title, riskCount, closeButton);
+    const refreshButton = document.createElement("button");
+    refreshButton.className = "refresh-page-button";
+    refreshButton.type = "button";
+    refreshButton.textContent = "Actualiser la page";
+    refreshButton.title = "Recharger la page avec les règles de blocage actuelles";
+    refreshButton.addEventListener("click", () => window.location.reload());
+    header.append(title, riskCount, refreshButton, closeButton);
 
     riskList = document.createElement("ul");
     panel.append(header, riskList);
@@ -177,7 +187,33 @@
       const filter = document.createElement("span");
       filter.className = "filter";
       filter.textContent = `Filtre : ${risk.filter}`;
-      item.append(resource, filter);
+      const blockButton = document.createElement("button");
+      blockButton.className = "block-domain-button";
+      blockButton.type = "button";
+      blockButton.dataset.hostname = url.hostname;
+      blockButton.textContent = "Bloquer le domaine";
+      blockButton.title = `Bloquer ${url.hostname} sur tous les sites`;
+      blockButton.addEventListener("click", async () => {
+        blockButton.disabled = true;
+        try {
+          const response = await chrome.runtime.sendMessage({
+            action: "block-risk-domain",
+            hostname: url.hostname,
+          });
+          if (!response?.ok) throw new Error(response?.reason || "DNR update failed");
+          for (const button of riskList.querySelectorAll(".block-domain-button")) {
+            if (button.dataset.hostname !== url.hostname) continue;
+            button.disabled = true;
+            button.textContent = response.alreadyBlocked ? "Déjà bloqué" : "Bloqué";
+            button.title = `${url.hostname} est bloqué par une règle DNR.`;
+          }
+        } catch (error) {
+          console.error(`${LOG_PREFIX} could not block risk domain`, url.hostname, error);
+          blockButton.disabled = false;
+          blockButton.textContent = "Erreur, réessayer";
+        }
+      });
+      item.append(resource, filter, blockButton);
       riskList.append(item);
     }
 
