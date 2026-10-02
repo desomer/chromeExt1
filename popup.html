@@ -117,6 +117,28 @@
             Le blocage est global pour l’origine. Les requêtes déjà chargées ne sont pas annulées.
           </p>
 
+          <div id="temporary-changes" class="temporary-changes" hidden>
+            <span id="temporary-changes-count"></span>
+            <span class="temporary-changes-actions">
+              <button
+                id="commit-temporary"
+                class="refresh-button"
+                type="button"
+                title="Appliquer définitivement tous les blocages et déblocages temporaires"
+              >
+                Rendre définitif
+              </button>
+              <button
+                id="rollback-temporary"
+                class="refresh-button"
+                type="button"
+                title="Annuler tous les blocages et déblocages temporaires"
+              >
+                Annuler
+              </button>
+            </span>
+          </div>
+
           <div class="reputation-tools">
             <p id="reputation-status" aria-live="polite">
               Les indicateurs apparaîtront après vérification. Les URL seront envoyées aux services concernés.

@@ -79,10 +79,32 @@ let reputationRequestId = 0;
 let elementsScanned = false;
 let activeTabId = null;
 
+// Temporary changes live in DNR session rules: "block" rules temporarily block an origin,
+// higher-priority "allow" rules temporarily lift a permanent block.
+let temporaryRules = new Map();
+const TEMPORARY_ALLOW_PRIORITY = 2;
+
+function getOriginRuleHostname(rule) {
+  return rule.condition.urlFilter?.match(BLOCK_RULE_PATTERN)?.[1] ?? null;
+}
+
+async function loadTemporaryRules() {
+  const sessionRules = await chrome.declarativeNetRequest.getSessionRules();
+  temporaryRules = new Map(
+    sessionRules.flatMap((rule) => {
+      const hostname = getOriginRuleHostname(rule);
+      return hostname && ["block", "allow"].includes(rule.action.type)
+        ? [[hostname, rule]]
+        : [];
+    })
+  );
+}
+
 async function loadBlockingRules() {
   const [dynamicRules, storedTimestamps] = await Promise.all([
     chrome.declarativeNetRequest.getDynamicRules(),
     chrome.storage.local.get({ blockedOriginTimestamps: {} }),
+    loadTemporaryRules(),
   ]);
   let rules = dynamicRules;
   blockedOriginTimestamps = storedTimestamps.blockedOriginTimestamps;
@@ -122,54 +144,161 @@ async function loadBlockingRules() {
   );
 }
 
+function hostnameMatches(hostname, ruleHostname) {
+  return hostname === ruleHostname || hostname.endsWith(`.${ruleHostname}`);
+}
+
+function isHostnamePermanentlyBlocked(hostname) {
+  const normalizedHostname = hostname.toLowerCase();
+  return [...blockingRules.keys()].some((blockedHostname) =>
+    hostnameMatches(normalizedHostname, blockedHostname)
+  );
+}
+
 function isHostnameBlocked(hostname) {
   const normalizedHostname = hostname.toLowerCase();
-  return [...blockingRules.keys()].some(
-    (blockedHostname) =>
-      normalizedHostname === blockedHostname ||
-      normalizedHostname.endsWith(`.${blockedHostname}`)
+  const temporaryEntries = [...temporaryRules.entries()].filter(([ruleHostname]) =>
+    hostnameMatches(normalizedHostname, ruleHostname)
   );
+  if (temporaryEntries.some(([, rule]) => rule.action.type === "allow")) return false;
+  if (temporaryEntries.some(([, rule]) => rule.action.type === "block")) return true;
+  return isHostnamePermanentlyBlocked(normalizedHostname);
+}
+
+function getTemporaryState(hostname) {
+  return temporaryRules.get(hostname.toLowerCase())?.action.type ?? null;
+}
+
+async function nextRuleId(getRules) {
+  const rules = await getRules();
+  return Math.max(0, ...rules.map(({ id }) => id)) + 1;
+}
+
+function afterBlockingChange() {
+  document.querySelector("#reload-page").hidden = false;
+  updateSummary();
+  updateTemporaryChangesBar();
+  renderResults(document.querySelector("#search").value);
+  if (activeTabId != null) {
+    chrome.runtime.sendMessage({ action: "refresh-blocked-badge", tabId: activeTabId });
+  }
+}
+
+async function removeTemporaryRule(hostname) {
+  const rule = temporaryRules.get(hostname);
+  if (!rule) return;
+  await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [rule.id] });
+  temporaryRules.delete(hostname);
+}
+
+async function setPermanentBlock(hostname, blocked) {
+  const existingRule = blockingRules.get(hostname);
+  if (blocked && !existingRule) {
+    const rule = {
+      id: await nextRuleId(() => chrome.declarativeNetRequest.getDynamicRules()),
+      priority: 1,
+      action: { type: "block" },
+      condition: {
+        urlFilter: `||${hostname}^`,
+        resourceTypes: BLOCKED_REQUEST_TYPES,
+      },
+    };
+    await chrome.declarativeNetRequest.updateDynamicRules({ addRules: [rule] });
+    blockingRules.set(hostname, rule);
+    blockedOriginTimestamps[hostname] = Date.now();
+  } else if (!blocked && existingRule) {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [existingRule.id],
+    });
+    blockingRules.delete(hostname);
+    delete blockedOriginTimestamps[hostname];
+  }
 }
 
 async function toggleBlockedOrigin(origin, button) {
   const hostname = new URL(origin).hostname;
-  const existingRule = blockingRules.get(hostname);
+  const shouldBlock = !isHostnameBlocked(hostname);
   button.disabled = true;
 
   try {
-    if (existingRule) {
-      await chrome.declarativeNetRequest.updateDynamicRules({
-        removeRuleIds: [existingRule.id],
-      });
-      blockingRules.delete(hostname);
-      delete blockedOriginTimestamps[hostname];
+    await removeTemporaryRule(hostname);
+    await setPermanentBlock(hostname, shouldBlock);
+    await chrome.storage.local.set({ blockedOriginTimestamps });
+    afterBlockingChange();
+  } catch {
+    button.disabled = false;
+    button.textContent = "Erreur";
+  }
+}
+
+async function toggleTemporaryOrigin(origin, button) {
+  const hostname = new URL(origin).hostname;
+  button.disabled = true;
+
+  try {
+    if (temporaryRules.has(hostname)) {
+      await removeTemporaryRule(hostname);
     } else {
-      const rules = await chrome.declarativeNetRequest.getDynamicRules();
+      const isBlocked = isHostnameBlocked(hostname);
       const rule = {
-        id: Math.max(0, ...rules.map(({ id }) => id)) + 1,
-        priority: 1,
-        action: { type: "block" },
+        id: await nextRuleId(() => chrome.declarativeNetRequest.getSessionRules()),
+        priority: isBlocked ? TEMPORARY_ALLOW_PRIORITY : 1,
+        action: { type: isBlocked ? "allow" : "block" },
         condition: {
           urlFilter: `||${hostname}^`,
           resourceTypes: BLOCKED_REQUEST_TYPES,
         },
       };
-      await chrome.declarativeNetRequest.updateDynamicRules({ addRules: [rule] });
-      blockingRules.set(hostname, rule);
-      blockedOriginTimestamps[hostname] = Date.now();
+      await chrome.declarativeNetRequest.updateSessionRules({ addRules: [rule] });
+      temporaryRules.set(hostname, rule);
     }
-    await chrome.storage.local.set({ blockedOriginTimestamps });
-
-    document.querySelector("#reload-page").hidden = false;
-    updateSummary();
-    renderResults(document.querySelector("#search").value);
-    if (activeTabId != null) {
-      chrome.runtime.sendMessage({ action: "refresh-blocked-badge", tabId: activeTabId });
-    }
+    afterBlockingChange();
   } catch {
     button.disabled = false;
     button.textContent = "Erreur";
   }
+}
+
+async function commitTemporaryChanges() {
+  const buttons = document.querySelectorAll("#temporary-changes button");
+  for (const button of buttons) button.disabled = true;
+  try {
+    await loadTemporaryRules();
+    for (const [hostname, rule] of temporaryRules) {
+      await setPermanentBlock(hostname, rule.action.type === "block");
+    }
+    await chrome.storage.local.set({ blockedOriginTimestamps });
+    await rollbackTemporaryRules();
+    afterBlockingChange();
+  } finally {
+    for (const button of buttons) button.disabled = false;
+  }
+}
+
+async function rollbackTemporaryRules() {
+  await chrome.declarativeNetRequest.updateSessionRules({
+    removeRuleIds: [...temporaryRules.values()].map(({ id }) => id),
+  });
+  temporaryRules.clear();
+}
+
+async function rollbackTemporaryChanges() {
+  const buttons = document.querySelectorAll("#temporary-changes button");
+  for (const button of buttons) button.disabled = true;
+  try {
+    await loadTemporaryRules();
+    await rollbackTemporaryRules();
+    afterBlockingChange();
+  } finally {
+    for (const button of buttons) button.disabled = false;
+  }
+}
+
+function updateTemporaryChangesBar() {
+  const count = temporaryRules.size;
+  document.querySelector("#temporary-changes").hidden = count === 0;
+  document.querySelector("#temporary-changes-count").textContent =
+    `${count} changement${count > 1 ? "s" : ""} temporaire${count > 1 ? "s" : ""}`;
 }
 
 function createTypeBadge(type, count) {
@@ -351,7 +480,14 @@ function renderResults(query = "") {
       }
     }
     heading.append(hostname);
-    if (isBlocked) {
+    const temporaryState = getTemporaryState(groupHostname);
+    if (temporaryState) {
+      const temporaryLabel = document.createElement("span");
+      temporaryLabel.className = `origin-block-date origin-temporary origin-temporary-${temporaryState}`;
+      temporaryLabel.textContent =
+        temporaryState === "block" ? "Bloqué temporairement" : "Débloqué temporairement";
+      heading.append(temporaryLabel);
+    } else if (isBlocked) {
       const blockDate = document.createElement("span");
       blockDate.className = "origin-block-date";
       blockDate.textContent = `Bloqué le ${formatBlockDate(
@@ -375,6 +511,21 @@ function renderResults(query = "") {
       toggleBlockedOrigin(group.origin, blockButton);
     });
 
+    const temporaryButton = document.createElement("button");
+    temporaryButton.className = `block-button temporary-block-button${temporaryState ? " is-temporary" : ""}`;
+    temporaryButton.type = "button";
+    temporaryButton.textContent = isBlocked ? "Débloquer temp." : "Bloquer temp.";
+    temporaryButton.title = `${isBlocked ? "Débloquer temporairement" : "Bloquer temporairement"} les ressources de ${groupHostname}`;
+    temporaryButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleTemporaryOrigin(group.origin, temporaryButton);
+    });
+
+    const blockButtons = document.createElement("span");
+    blockButtons.className = "block-buttons";
+    blockButtons.append(blockButton, temporaryButton);
+
     const searchButton = document.createElement("button");
     searchButton.className = "search-button";
     searchButton.type = "button";
@@ -389,7 +540,7 @@ function renderResults(query = "") {
       dialog.showModal();
     });
 
-    actions.append(blockButton, searchButton);
+    actions.append(blockButtons, searchButton);
     summary.append(heading, actions);
 
     const resourceList = document.createElement("div");

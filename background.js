@@ -172,6 +172,37 @@ function getBlockedOriginHostnames(rules) {
   });
 }
 
+function getAllowedOriginHostnames(rules) {
+  return rules.flatMap((rule) => {
+    if (rule.action.type !== "allow") return [];
+    const match = rule.condition.urlFilter?.match(ORIGIN_BLOCK_RULE_PATTERN);
+    return match ? [match[1].toLowerCase()] : [];
+  });
+}
+
+async function getEffectiveBlockingState() {
+  const [dynamicRules, sessionRules] = await Promise.all([
+    chrome.declarativeNetRequest.getDynamicRules(),
+    chrome.declarativeNetRequest.getSessionRules(),
+  ]);
+  return {
+    dynamicRules,
+    sessionRules,
+    blocked: [
+      ...getBlockedOriginHostnames(dynamicRules),
+      ...getBlockedOriginHostnames(sessionRules),
+    ],
+    allowed: getAllowedOriginHostnames(sessionRules),
+  };
+}
+
+function isHostnameEffectivelyBlocked(hostname, state) {
+  return (
+    !isHostnameBlockedByRules(hostname, state.allowed) &&
+    isHostnameBlockedByRules(hostname, state.blocked)
+  );
+}
+
 function isHostnameBlockedByRules(hostname, blockedHostnames) {
   const normalizedHostname = hostname.toLowerCase();
   return blockedHostnames.some(
@@ -876,9 +907,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     (async () => {
-      const rules = await chrome.declarativeNetRequest.getDynamicRules();
-      if (isHostnameBlockedByRules(hostname, getBlockedOriginHostnames(rules))) {
+      const state = await getEffectiveBlockingState();
+      if (isHostnameEffectivelyBlocked(hostname, state)) {
         return { ok: true, alreadyBlocked: true, hostname };
+      }
+
+      // An explicit block supersedes temporary unblocks covering this hostname.
+      const overridingAllowIds = state.sessionRules
+        .filter((rule) => {
+          if (rule.action.type !== "allow") return false;
+          const match = rule.condition.urlFilter?.match(ORIGIN_BLOCK_RULE_PATTERN);
+          return match && isHostnameBlockedByRules(hostname, [match[1].toLowerCase()]);
+        })
+        .map(({ id }) => id);
+      if (overridingAllowIds.length) {
+        await chrome.declarativeNetRequest.updateSessionRules({
+          removeRuleIds: overridingAllowIds,
+        });
+      }
+
+      const rules = state.dynamicRules;
+      if (isHostnameBlockedByRules(hostname, getBlockedOriginHostnames(rules))) {
+        await updateBlockedBadge(sender.tab.id);
+        return { ok: true, alreadyBlocked: false, hostname };
       }
 
       const rule = {
@@ -969,8 +1020,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         matches: evaluation.matchedCount,
       });
 
-      const dynamicRules = await chrome.declarativeNetRequest.getDynamicRules();
-      const blockedHostnames = getBlockedOriginHostnames(dynamicRules);
+      const blockingState = await getEffectiveBlockingState();
       const easyListMatches = resources.flatMap((resource) => {
         const result = evaluation.results.get(`${resource.type}\u0000${resource.url}`);
         return result?.matched
@@ -978,7 +1028,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           : [];
       });
       const riskPopupMatches = easyListMatches.filter((match) =>
-        !isHostnameBlockedByRules(new URL(match.url).hostname, blockedHostnames)
+        !isHostnameEffectivelyBlocked(new URL(match.url).hostname, blockingState)
       );
       console.info(`${logPrefix} filtered blocked domains from risk popup`, {
         easyListMatches: easyListMatches.length,

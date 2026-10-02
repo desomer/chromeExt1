@@ -103,6 +103,7 @@ async function scanActiveTab() {
     document.querySelector("#search").value = "";
     await loadBlockingRules();
     updateSummary();
+    updateTemporaryChangesBar();
     renderResults();
     const scannedFrameCount = frameScan.results.length;
     const skippedFrameCount = frameScan.framesSkipped;
@@ -127,6 +128,8 @@ document.querySelector("#search").addEventListener("input", (event) => {
 });
 
 document.querySelector("#check-reputation").addEventListener("click", checkDomainReputations);
+document.querySelector("#commit-temporary").addEventListener("click", commitTemporaryChanges);
+document.querySelector("#rollback-temporary").addEventListener("click", rollbackTemporaryChanges);
 
 const headerAction = document.querySelector("#refresh");
 const reloadPageAction = document.querySelector("#reload-page");

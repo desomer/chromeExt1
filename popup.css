@@ -722,6 +722,52 @@ dialog#search-dialog {
   opacity: 0.6;
 }
 
+.block-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+}
+
+.temporary-block-button {
+  border-style: dashed;
+}
+
+.temporary-block-button.is-temporary {
+  color: #1b1405;
+  background: var(--amber);
+  border-color: var(--amber);
+}
+
+.origin-temporary-block,
+.origin-temporary-allow {
+  color: var(--amber);
+}
+
+.temporary-changes {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 9px;
+  padding: 8px 10px;
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--amber-soft);
+  border: 1px dashed var(--amber);
+  border-radius: 8px;
+}
+
+.temporary-changes[hidden] {
+  display: none;
+}
+
+.temporary-changes-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .resource-list {
   padding: 0 12px 10px;
 }
