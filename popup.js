@@ -141,11 +141,17 @@ headerAction.addEventListener("click", () => {
   else scanActiveTab();
 });
 reloadPageAction.addEventListener("click", async () => {
-  if (activeTabId == null) return;
   reloadPageAction.disabled = true;
   try {
-    await chrome.tabs.reload(activeTabId);
+    const tabId =
+      activeTabId ??
+      (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id;
+    if (tabId == null) return;
+    await chrome.tabs.reload(tabId);
+    reloadPageAction.hidden = true;
   } catch {
+    // The tab may have been closed; keep the button available for another attempt.
+  } finally {
     reloadPageAction.disabled = false;
   }
 });
