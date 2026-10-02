@@ -142,26 +142,26 @@
     panel = document.createElement("section");
     panel.className = "panel";
     panel.setAttribute("role", "alertdialog");
-    panel.setAttribute("aria-label", "Nouveaux risques EasyList");
+    panel.setAttribute("aria-label", chrome.i18n.getMessage("riskDialogLabel"));
 
     const header = document.createElement("header");
     const title = document.createElement("h2");
-    title.textContent = "Nouveaux risques détectés";
+    title.textContent = chrome.i18n.getMessage("riskDialogTitle");
     riskCount = document.createElement("span");
     riskCount.className = "count";
     const closeButton = document.createElement("button");
     closeButton.type = "button";
     closeButton.textContent = "×";
-    closeButton.title = "Fermer la liste";
-    closeButton.setAttribute("aria-label", "Fermer la liste des risques");
+    closeButton.title = chrome.i18n.getMessage("riskCloseTitle");
+    closeButton.setAttribute("aria-label", chrome.i18n.getMessage("riskCloseLabel"));
     closeButton.addEventListener("click", () => {
       panelHost.style.setProperty("display", "none", "important");
     });
     const refreshButton = document.createElement("button");
     refreshButton.className = "refresh-page-button";
     refreshButton.type = "button";
-    refreshButton.textContent = "Actualiser la page";
-    refreshButton.title = "Recharger la page avec les règles de blocage actuelles";
+    refreshButton.textContent = chrome.i18n.getMessage("riskReload");
+    refreshButton.title = chrome.i18n.getMessage("riskReloadTitle");
     refreshButton.addEventListener("click", () => window.location.reload());
     header.append(title, riskCount, refreshButton, closeButton);
 
@@ -178,7 +178,9 @@
       return;
     }
 
-    riskCount.textContent = `${totalRiskCount} ressource${totalRiskCount === 1 ? "" : "s"}`;
+    riskCount.textContent = totalRiskCount === 1
+      ? chrome.i18n.getMessage("riskCountOne")
+      : chrome.i18n.getMessage("riskCountMany", [String(totalRiskCount)]);
     riskList.replaceChildren();
     const displayed = [...displayedRisks.values()];
     for (const risk of displayed) {
@@ -190,13 +192,13 @@
       resource.title = risk.url;
       const filter = document.createElement("span");
       filter.className = "filter";
-      filter.textContent = `Filtre : ${risk.filter}`;
+      filter.textContent = chrome.i18n.getMessage("riskFilter", [risk.filter]);
       const blockButton = document.createElement("button");
       blockButton.className = "block-domain-button";
       blockButton.type = "button";
       blockButton.dataset.hostname = url.hostname;
-      blockButton.textContent = "Bloquer le domaine";
-      blockButton.title = `Bloquer ${url.hostname} sur tous les sites`;
+      blockButton.textContent = chrome.i18n.getMessage("riskBlock");
+      blockButton.title = chrome.i18n.getMessage("riskBlockTitle", [url.hostname]);
       blockButton.addEventListener("click", async () => {
         blockButton.disabled = true;
         try {
@@ -208,13 +210,15 @@
           for (const button of riskList.querySelectorAll(".block-domain-button")) {
             if (button.dataset.hostname !== url.hostname) continue;
             button.disabled = true;
-            button.textContent = response.alreadyBlocked ? "Déjà bloqué" : "Bloqué";
-            button.title = `${url.hostname} est bloqué par une règle DNR.`;
+            button.textContent = chrome.i18n.getMessage(
+              response.alreadyBlocked ? "riskAlreadyBlocked" : "riskBlocked"
+            );
+            button.title = chrome.i18n.getMessage("riskBlockedTitle", [url.hostname]);
           }
         } catch (error) {
           console.error(`${LOG_PREFIX} could not block risk domain`, url.hostname, error);
           blockButton.disabled = false;
-          blockButton.textContent = "Erreur, réessayer";
+          blockButton.textContent = chrome.i18n.getMessage("riskRetry");
         }
       });
       item.append(resource, filter, blockButton);
@@ -224,7 +228,9 @@
     if (totalRiskCount > displayed.length) {
       const overflow = document.createElement("li");
       overflow.className = "overflow";
-      overflow.textContent = `Affichage des ${displayed.length} plus récents sur ${totalRiskCount}.`;
+      overflow.textContent = chrome.i18n.getMessage("riskOverflow", [
+        String(displayed.length), String(totalRiskCount),
+      ]);
       riskList.append(overflow);
     }
     panelHost.style.setProperty("display", "block", "important");

@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Resource Origins",
+  "default_locale": "en",
+  "name": "__MSG_extensionName__",
   "version": "1.19.0",
-  "description": "Analyse et bloque les ressources, avec confirmation avant l'ouverture de nouveaux onglets.",
+  "description": "__MSG_extensionDescription__",
   "permissions": [
     "activeTab",
     "scripting",
@@ -56,6 +57,7 @@
         "blocked-frame.html",
         "blocked-frame.css",
         "blocked-frame.js",
+        "ui-localization.js",
         "tab-prompt.html",
         "tab-prompt.css",
         "tab-prompt.js",
@@ -66,7 +68,7 @@
     }
   ],
   "action": {
-    "default_title": "Origines des ressources",
+    "default_title": "__MSG_extensionTitle__",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

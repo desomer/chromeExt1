@@ -534,7 +534,7 @@ function renderModifiedElements(scan) {
         for (const url of modification.urls ?? []) destinations.add(url);
         badge.title = `${
           details.length ? `Retiré : ${details.join(", ")}` : "Aucun gestionnaire retiré"
-        }\n${new Date(modification.at).toLocaleTimeString("fr-FR")}`;
+        }\n${new Date(modification.at).toLocaleTimeString(document.documentElement.lang)}`;
       }
       badges.append(badge);
     }
@@ -672,7 +672,7 @@ async function scanModifiedElements() {
 async function removeListedPointerEvents() {
   const removeButton = document.querySelector("#remove-events");
   const accepted = window.confirm(
-    "Retirer tous les événements souris, pointeur et tactiles des éléments listés ? Cette action est réversible uniquement en rechargeant la page."
+    localizeExtensionText("Retirer tous les événements souris, pointeur et tactiles des éléments listés ? Cette action est réversible uniquement en rechargeant la page.")
   );
   if (!accepted) return;
 
@@ -710,7 +710,7 @@ async function removeListedPointerEvents() {
 async function removeListedTriggerEvents() {
   const removeButton = document.querySelector("#remove-trigger-events");
   const accepted = window.confirm(
-    "Retirer uniquement mousedown, pointerdown, contextmenu et touchstart des cibles listées ?"
+    localizeExtensionText("Retirer uniquement mousedown, pointerdown, contextmenu et touchstart des cibles listées ?")
   );
   if (!accepted) return;
 
@@ -746,7 +746,7 @@ async function removeListedTriggerEvents() {
 async function removeAllContextMenuEvents() {
   const removeButton = document.querySelector("#remove-contextmenu");
   const accepted = window.confirm(
-    "Retirer tous les événements contextmenu de la page et de ses iframes, sans tenir compte du type d’élément ni de sa surface ?"
+    localizeExtensionText("Retirer tous les événements contextmenu de la page et de ses iframes, sans tenir compte du type d’élément ni de sa surface ?")
   );
   if (!accepted) return;
 

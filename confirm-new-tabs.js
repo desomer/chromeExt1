@@ -337,7 +337,7 @@ async function ensurePrompt() {
       const shadowRoot = promptHost.attachShadow({ mode: "closed" });
       const frame = document.createElement("iframe");
       frame.src = chrome.runtime.getURL("tab-prompt.html");
-      frame.title = "Confirmation d’ouverture d’un onglet";
+      frame.title = chrome.i18n.getMessage("tabPromptTitle");
       frame.style.cssText =
         "display:block;width:100%;height:100%;border:0;background:transparent;filter:drop-shadow(0 10px 24px rgba(0,0,0,.22));";
       shadowRoot.append(frame);

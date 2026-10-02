@@ -52,6 +52,69 @@ header {
   border-bottom: 3px solid #62a8ff;
 }
 
+.header-brand,
+.language-switch {
+  display: flex;
+  align-items: center;
+}
+
+.header-brand {
+  flex: none;
+  gap: 8px;
+}
+
+.language-switch {
+  gap: 3px;
+}
+
+.language-switch button {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  place-items: center;
+}
+
+.flag-icon {
+  display: block;
+  width: 19px;
+  height: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 2px;
+}
+
+.flag-fr {
+  background: linear-gradient(90deg, #0055a4 0 33.33%, #fff 33.33% 66.67%, #ef4135 66.67%);
+}
+
+.flag-en {
+  background:
+    linear-gradient(90deg, transparent 43%, #c8102e 43% 57%, transparent 57%),
+    linear-gradient(0deg, transparent 38%, #c8102e 38% 62%, transparent 62%),
+    linear-gradient(90deg, transparent 33%, #fff 33% 67%, transparent 67%),
+    linear-gradient(0deg, transparent 28%, #fff 28% 72%, transparent 72%),
+    linear-gradient(32deg, transparent 46%, #c8102e 46% 54%, transparent 54%),
+    linear-gradient(148deg, transparent 46%, #c8102e 46% 54%, transparent 54%),
+    linear-gradient(32deg, transparent 39%, #fff 39% 61%, transparent 61%),
+    linear-gradient(148deg, transparent 39%, #fff 39% 61%, transparent 61%),
+    #012169;
+}
+
+.language-switch button:hover,
+.language-switch button[aria-pressed="true"] {
+  background: rgba(98, 168, 255, 0.18);
+  border-color: rgba(151, 190, 207, 0.42);
+}
+
+.language-switch button:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
 .eyebrow {
   margin: 0 0 2px;
   color: #a8cfff;
@@ -314,10 +377,13 @@ main {
 .page-identity span {
   overflow: hidden;
   margin-top: 2px;
-  color: var(--muted);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#page-url {
+  color: var(--muted);
 }
 
 .summary-actions {
@@ -343,7 +409,9 @@ main {
 }
 
 .type-counts {
-  margin: 8px 0 8px;
+  margin: 8px 0 0;
+  justify-content: flex-start;
+  padding-left: 0;
 }
 
 .badge {

@@ -289,7 +289,10 @@ function flashReappliedElement(bounds, kind, element, selector = "") {
   const id = element?.id ? `#${CSS.escape(element.id)}` : "—";
   const path =
     element instanceof Element ? getPathSelector(element) : selector || "—";
-  label.textContent = `Type : ${kind || "inconnu"}\nID : ${id}\nPath : ${path || "—"}`;
+  const french = navigator.language.toLowerCase().startsWith("fr");
+  label.textContent = french
+    ? `Type : ${kind || "inconnu"}\nID : ${id}\nChemin : ${path || "—"}`
+    : `Type: ${kind || "unknown"}\nID: ${id}\nPath: ${path || "—"}`;
   label.dataset.resourceOriginsReappliedLabel = "true";
   for (const [property, value] of Object.entries({
     position: "absolute",

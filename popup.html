@@ -8,8 +8,12 @@
   </head>
   <body>
     <header>
-      <div>
+      <div class="header-brand">
         <p class="eyebrow">Surf Gard v1.0</p>
+        <div class="language-switch" role="group" aria-label="Langue de l’interface">
+          <button type="button" data-ui-language="fr" aria-label="Français" title="Français"><span class="flag-icon flag-fr" aria-hidden="true"></span></button>
+          <button type="button" data-ui-language="en" aria-label="English" title="English"><span class="flag-icon flag-en" aria-hidden="true"></span></button>
+        </div>
       </div>
       <button
         id="open-domain-settings"
@@ -94,6 +98,7 @@
             <div class="page-identity">
               <strong id="page-host"></strong>
               <span id="page-url"></span>
+              <div id="type-counts" class="type-counts" aria-label="Totaux par type"></div>
             </div>
             <div class="summary-actions">
               <strong id="resource-total"></strong>
@@ -102,8 +107,6 @@
               </button>
             </div>
           </div>
-
-          <div id="type-counts" class="type-counts" aria-label="Totaux par type"></div>
 
           <label class="search-field">
             <span>Filtrer les domaines ou fichiers</span>
@@ -322,6 +325,7 @@
       </form>
     </dialog>
 
+    <script src="ui-localization.js"></script>
     <script src="resource-scanner.js"></script>
     <script src="popup-injected.js"></script>
     <script src="easylist.js"></script>

@@ -16,7 +16,7 @@ const BLOCKED_REQUEST_TYPES = [
   "other",
 ];
 const BLOCK_RULE_PATTERN = /^\|\|(.+)\^$/;
-const blockDateFormatter = new Intl.DateTimeFormat("fr-FR", {
+const blockDateFormatter = new Intl.DateTimeFormat(document.documentElement.lang, {
   dateStyle: "short",
   timeStyle: "medium",
 });
@@ -640,7 +640,7 @@ async function checkRdap(hostnames, requestId) {
         );
         const isRecent = ageInDays < 365;
         const ageLabel = formatDomainAge(ageInDays);
-        const title = `Date d’enregistrement RDAP : ${registrationDate.toLocaleDateString("fr-FR")}. Âge : ${ageLabel}.`;
+        const title = `Date d’enregistrement RDAP : ${registrationDate.toLocaleDateString(document.documentElement.lang)}. Âge : ${ageLabel}.`;
         for (const hostname of hosts) {
           setDomainReputation(
             hostname,

@@ -6,7 +6,7 @@ const DOMAIN_SETTING_KEYS = [
   "allowedTabDestinations",
 ];
 const BLOCK_RULE_PATTERN = /^\|\|(.+)\^$/;
-const blockDateFormatter = new Intl.DateTimeFormat("fr-FR", {
+const blockDateFormatter = new Intl.DateTimeFormat(document.documentElement.lang, {
   dateStyle: "short",
   timeStyle: "medium",
 });
@@ -157,7 +157,7 @@ function renderDomainList(rules) {
 async function removeDomain(domain, button) {
   if (
     !window.confirm(
-      `Supprimer tous les réglages de ${domain}, y compris ses règles de blocage ?`
+      localizeExtensionText(`Supprimer tous les réglages de ${domain}, y compris ses règles de blocage ?`)
     )
   ) {
     return;

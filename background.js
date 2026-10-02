@@ -761,7 +761,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: INSPECT_ELEMENT_MENU_ID,
-      title: "Afficher dans l’onglet Éléments",
+      title: chrome.i18n.getMessage("inspectElement"),
       contexts: ["all"],
     });
   });
