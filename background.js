@@ -5,6 +5,7 @@ const APPROVAL_LIFETIME_MS = 2000;
 const DOWNLOAD_STARTUP_GRACE_MS = 30_000;
 const DOWNLOAD_CONTROL_RESTORED_ALARM = "download-control-restored";
 const pendingTabs = new Map();
+const pendingDownloads = new Map();
 const approvedOpenings = [];
 const approvedDownloads = [];
 const navigationStartTimes = new Map();
@@ -635,13 +636,16 @@ function consumeApproval(openerTabId, targetUrl) {
   return true;
 }
 
-function consumeDownloadApproval(url) {
+function consumeDownloadApproval(url, finalUrl = "") {
   const now = Date.now();
   for (let index = approvedDownloads.length - 1; index >= 0; index -= 1) {
     if (approvedDownloads[index].expiresAt <= now) approvedDownloads.splice(index, 1);
   }
 
-  const approvalIndex = approvedDownloads.findIndex((approval) => approval.url === url);
+  const approvalIndex = approvedDownloads.findIndex(
+    (approval) =>
+      approval.url === url || (Boolean(finalUrl) && approval.url === finalUrl)
+  );
   if (approvalIndex === -1) return false;
 
   approvedDownloads.splice(approvalIndex, 1);
@@ -706,23 +710,67 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   clearModificationHistory(tabId);
 });
 
-async function guardCreatedDownload(item) {
-  await downloadStartupGraceReady;
-  if (Date.now() < downloadControlEnabledAt) return;
+function getOrCreatePendingDownload(item) {
+  let entry = pendingDownloads.get(item.id);
+  if (!entry) {
+    entry = {
+      status: "checking",
+      suggest: null,
+      filename: item.filename || "",
+      tabId: null,
+      url: item.url || "",
+    };
+    pendingDownloads.set(item.id, entry);
+  } else {
+    if (item.filename && !entry.filename) entry.filename = item.filename;
+    if (item.url && !entry.url) entry.url = item.url;
+  }
+  return entry;
+}
 
-  // Pause first so the file does not finish while the confirmation rules are read.
-  const paused = await chrome.downloads.pause(item.id).then(
-    () => true,
-    () => false
-  );
+function sanitizeSuggestedFilename(filename) {
+  if (typeof filename !== "string") return "";
+  const baseName = filename.split(/[\\/]/).pop() || "";
+  return baseName
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .replace(/[. ]+$/g, "")
+    .trim()
+    .slice(0, 200);
+}
+
+function startApprovedDownload(url, suggestedFilename) {
+  const safeFilename = sanitizeSuggestedFilename(suggestedFilename);
+  const options = safeFilename ? { url, filename: safeFilename } : { url };
+  try {
+    const result = chrome.downloads.download(options);
+    if (result?.catch && safeFilename) {
+      result.catch(() => {
+        runBestEffort(() => chrome.downloads.download({ url }));
+      });
+    } else if (result?.catch) {
+      result.catch(() => {});
+    }
+  } catch {
+    if (safeFilename) runBestEffort(() => chrome.downloads.download({ url }));
+  }
+}
+
+async function guardCreatedDownload(item, entry, pausePromise) {
+  await downloadStartupGraceReady;
+  if (Date.now() < downloadControlEnabledAt) {
+    await allowDownload(item.id, item.url);
+    return;
+  }
+
+  await pausePromise;
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const confirmDownloads = await isConfirmationEnabledForUrl(
     "downloadConfirmationRules",
-    tab?.url || item.url
+    tab?.url || item.referrer || item.url
   );
-  if (!confirmDownloads || consumeDownloadApproval(item.url)) {
-    if (paused) await allowDownload(item.id, item.url);
+  if (!confirmDownloads || consumeDownloadApproval(item.url, item.finalUrl)) {
+    await allowDownload(item.id, item.url);
     return;
   }
 
@@ -731,6 +779,11 @@ async function guardCreatedDownload(item) {
     return;
   }
 
+  if (entry.status === "allowed" || entry.status === "denied") return;
+  entry.status = "awaiting-user";
+  entry.tabId = tab.id;
+  const sentFilename = entry.filename || item.filename || "";
+
   try {
     const response = await chrome.tabs.sendMessage(
       tab.id,
@@ -738,7 +791,7 @@ async function guardCreatedDownload(item) {
         action: "show-download-confirmation",
         downloadId: item.id,
         url: item.url,
-        filename: item.filename,
+        filename: sentFilename,
         referrer: item.referrer,
         byExtensionId: item.byExtensionId,
       },
@@ -748,6 +801,18 @@ async function guardCreatedDownload(item) {
       await denyDownload(item.id);
     } else if (!response?.shown) {
       await allowDownload(item.id, item.url);
+    } else if (entry.filename && entry.filename !== sentFilename) {
+      runBestEffort(() =>
+        chrome.tabs.sendMessage(
+          tab.id,
+          {
+            action: "update-download-filename",
+            downloadId: item.id,
+            filename: entry.filename,
+          },
+          { frameId: 0 }
+        )
+      );
     }
   } catch {
     // The active tab cannot display the confirmation panel; let the download proceed.
@@ -765,7 +830,29 @@ async function getDownload(downloadId) {
 
 // Resuming keeps the original request (cookies, POST body, blob: URL, one-time token).
 // A new GET is only a last resort, because servers often answer it with another file.
-async function allowDownload(downloadId, url) {
+async function allowDownload(downloadId, url, suggestedFilename = "") {
+  if (!Number.isInteger(downloadId)) {
+    if (!url) return;
+    approvedDownloads.push({ url, expiresAt: Date.now() + APPROVAL_LIFETIME_MS });
+    startApprovedDownload(url, suggestedFilename);
+    return;
+  }
+
+  const pending = pendingDownloads.get(downloadId);
+  if (pending) {
+    pending.status = "allowed";
+    const suggest = pending.suggest;
+    pending.suggest = null;
+    pendingDownloads.delete(downloadId);
+    if (typeof suggest === "function") {
+      try {
+        suggest();
+      } catch {
+        // The download may have already been cancelled or completed by Chrome.
+      }
+    }
+  }
+
   const item = await getDownload(downloadId);
   if (item?.state === "complete") return;
   if (item?.paused || item?.canResume) {
@@ -773,29 +860,113 @@ async function allowDownload(downloadId, url) {
       await chrome.downloads.resume(downloadId);
       return;
     } catch {
+      const refreshed = await getDownload(downloadId);
+      if (
+        refreshed?.state === "complete" ||
+        (refreshed?.state === "in_progress" && !refreshed.paused)
+      ) {
+        return;
+      }
       await chrome.downloads.cancel(downloadId).catch(() => {});
     }
   } else if (item?.state === "in_progress") {
     return;
   }
 
-  approvedDownloads.push({ url, expiresAt: Date.now() + APPROVAL_LIFETIME_MS });
-  runBestEffort(() => chrome.downloads.download({ url: item?.finalUrl || url }));
+  const targetUrl = item?.finalUrl || url;
+  if (!targetUrl) return;
+  approvedDownloads.push({ url: targetUrl, expiresAt: Date.now() + APPROVAL_LIFETIME_MS });
+  if (url && url !== targetUrl) {
+    approvedDownloads.push({ url, expiresAt: Date.now() + APPROVAL_LIFETIME_MS });
+  }
+  startApprovedDownload(targetUrl, suggestedFilename);
 }
 
 async function denyDownload(downloadId) {
+  if (!Number.isInteger(downloadId)) return;
+
+  const pending = pendingDownloads.get(downloadId);
+  if (pending) {
+    pending.status = "denied";
+    pending.suggest = null;
+    pendingDownloads.delete(downloadId);
+  }
+
+  await chrome.downloads.cancel(downloadId).catch(() => {});
   const item = await getDownload(downloadId);
-  if (!item) return;
-  if (item.state === "in_progress") {
-    await chrome.downloads.cancel(downloadId).catch(() => {});
-  } else if (item.state === "complete") {
+  if (item?.state === "complete") {
     await chrome.downloads.removeFile(downloadId).catch(() => {});
   }
   await chrome.downloads.erase({ id: downloadId }).catch(() => {});
 }
 
 chrome.downloads.onCreated.addListener((item) => {
-  guardCreatedDownload(item);
+  if (Date.now() < downloadControlEnabledAt) return;
+  if (consumeDownloadApproval(item.url, item.finalUrl)) {
+    pendingDownloads.set(item.id, {
+      status: "allowed",
+      suggest: null,
+      filename: item.filename || "",
+      tabId: null,
+      url: item.url || "",
+    });
+    return;
+  }
+
+  const entry = getOrCreatePendingDownload(item);
+  // Pause synchronously before any await so small downloads cannot finish while rules load.
+  const pausePromise = chrome.downloads.pause(item.id).then(
+    () => true,
+    () => false
+  );
+  guardCreatedDownload(item, entry, pausePromise);
+});
+
+chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+  if (Date.now() < downloadControlEnabledAt) return false;
+
+  const existing = pendingDownloads.get(item.id);
+  if (existing?.status === "allowed") {
+    pendingDownloads.delete(item.id);
+    return false;
+  }
+  if (existing?.status === "denied") {
+    pendingDownloads.delete(item.id);
+    denyDownload(item.id);
+    return false;
+  }
+
+  const entry = getOrCreatePendingDownload(item);
+  entry.suggest = suggest;
+  if (item.filename) entry.filename = item.filename;
+  chrome.downloads.pause(item.id).catch(() => {});
+
+  if (entry.status === "awaiting-user" && entry.tabId && entry.filename) {
+    runBestEffort(() =>
+      chrome.tabs.sendMessage(
+        entry.tabId,
+        {
+          action: "update-download-filename",
+          downloadId: item.id,
+          filename: entry.filename,
+        },
+        { frameId: 0 }
+      )
+    );
+  }
+
+  // Hold filename determination until the user confirms or denies the download.
+  return true;
+});
+
+chrome.downloads.onChanged.addListener((delta) => {
+  const state = delta.state?.current;
+  if (state === "complete" || state === "interrupted") {
+    const entry = pendingDownloads.get(delta.id);
+    if (entry && entry.status !== "awaiting-user") {
+      pendingDownloads.delete(delta.id);
+    }
+  }
 });
 
 // Counts resources blocked by our own declarativeNetRequest rules since the current
@@ -1316,7 +1487,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "open-confirmed-download" && sender.tab?.id) {
-    allowDownload(message.downloadId, message.url);
+    allowDownload(message.downloadId, message.url, message.filename);
     return;
   }
 

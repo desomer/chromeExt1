@@ -25,6 +25,12 @@ window.addEventListener("message", (event) => {
       updatePendingCount(data.pendingCount);
       return;
     }
+    if (data.action === "update-filename") {
+      if (typeof data.filename === "string" && data.filename) {
+        document.querySelector("#hostname").textContent = data.filename;
+      }
+      return;
+    }
     if (data.action !== "show") return;
 
     const requesterLabel = document.querySelector("#requester-label");
