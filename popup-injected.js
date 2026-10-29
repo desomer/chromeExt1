@@ -572,9 +572,11 @@ function removeEventFromLastScan(targetIndex, eventType, scanKey = "lastScan") {
 }
 
 function setPointerElementHighlight(targetIndex, enabled, scanKey = "lastScan") {
-  const target = window[
-    Symbol.for("resource-origins.listener-registry")
-  ]?.[scanKey]?.[targetIndex];
+  const target =
+    window[Symbol.for("resource-origins.listener-registry")]?.[scanKey]?.[targetIndex] ??
+    (scanKey === "lastLinksScan"
+      ? window[Symbol.for("resource-origins.last-links-scan")]?.[targetIndex]
+      : null);
   if (!target) return;
 
   const stateKey = Symbol.for("resource-origins.hover-highlight-states");
@@ -820,5 +822,491 @@ function removeContextMenuEventsFromAllTargets() {
   }
 
   return { targetsAffected, listenersRemoved, inlineHandlersRemoved };
+}
+
+function inspectPageLinks() {
+  const registry = window[Symbol.for("resource-origins.listener-registry")];
+  let frameDepth = 0;
+  let currentWindow = window;
+  while (currentWindow !== currentWindow.top) {
+    frameDepth += 1;
+    currentWindow = currentWindow.parent;
+  }
+
+  const createSelector = (element) => {
+    if (!(element instanceof Element)) return "";
+    if (element.id) return `#${CSS.escape(element.id)}`;
+
+    const parts = [];
+    let current = element;
+    while (current instanceof Element && parts.length < 4) {
+      let part = current.tagName.toLowerCase();
+      const classes = [...current.classList].slice(0, 2);
+      if (classes.length) part += `.${classes.map((name) => CSS.escape(name)).join(".")}`;
+
+      const parent = current.parentElement;
+      if (parent) {
+        const siblings = [...parent.children].filter(
+          (sibling) => sibling.tagName === current.tagName
+        );
+        if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+      }
+      parts.unshift(part);
+      current = parent;
+    }
+    return parts.join(" > ");
+  };
+
+  const ignoredTags = new Set([
+    "LINK",
+    "BASE",
+    "STYLE",
+    "SCRIPT",
+    "META",
+    "HEAD",
+    "TITLE",
+    "IMG",
+    "PICTURE",
+    "SOURCE",
+    "TRACK",
+    "SVG",
+    "PATH",
+    "G",
+    "DEFS",
+    "SYMBOL",
+    "USE",
+    "IMAGE",
+    "CANVAS",
+    "NOSCRIPT",
+  ]);
+  const ignoredAttributePattern =
+    /^(?:class|id|style|src|srcset|imagesrcset|sizes|poster|xmlns(?::.*)?|aria-.*|data-.*(?:srcset|lazy|img|image|thumb|thumbnail|icon|avatar|poster|bg|background|retina|placeholder|width|height|size|color|theme|svg|sprite|script|style|css))$/i;
+  const urlAttributeNamePattern =
+    /^(?:data-.*(?:url|href|link|uri|redirect|dest|destination|location|target-url|open|nav|navigate|go|out|click-url|dl|download|file|stream|video|play|popup|action)|data-(?:u|l|to)|url|link|redirect|destination|to|href|xlink:href|action|formaction)$/i;
+  const downloadAttributeNamePattern =
+    /^(?:download|data-.*(?:dl|download|file|stream|video|torrent))$/i;
+  const excludedAssetExtensionPattern =
+    /\.(?:png|jpe?g|gif|webp|avif|svgz?|ico|bmp|tiff?|apng|jfif|pjp(?:eg)?|cur|heic|heif|raw|js|mjs|cjs|jsx|ts|tsx|css|scss|sass|less|map|wasm|woff2?|ttf|otf|eot|webmanifest|json|xml|rss|atom|vtt|srt)(?:$|[?#&])/i;
+  const excludedAssetQueryPattern =
+    /(?:^|[?&])(?:format|ext|type|mime)=(?:png|jpe?g|gif|webp|avif|svg|ico|bmp|js|javascript|css|woff2?|ttf|json|xml)(?:$|[&])/i;
+  const excludedHostPattern = /^(?:www\.)?w3\.org$|^schemas\./i;
+  const downloadExtensionPattern =
+    /\.(?:zip|rar|7z|tar|gz|tgz|bz2|xz|iso|dmg|pkg|exe|msi|deb|rpm|apk|ipa|jar|bin|pdf|docx?|xlsx?|pptx?|odt|ods|odp|csv|txt|rtf|epub|mobi|mp4|mkv|avi|mov|webm|flv|wmv|mp3|flac|wav|ogg|m4a|aac|m3u8|torrent)(?:$|[?#&])/i;
+  const downloadPathOrParamPattern =
+    /(?:\/(?:download|downloads|dl|attachment)(?:\/|$)|[?&](?:download|dl|attachment|filename)=)/i;
+  const explicitUrlPattern = /(?:https?|ftp):\/\/[^\s"'<>\\`)\]]+|magnet:\?[^\s"'<>\\`)\]]+/gi;
+  const encodedUrlPattern = /https?%3A%2F%2F[^\s"'<>\\`&)\]]+/gi;
+  const base64UrlPattern = /\b(aHR0cHM6Ly[A-Za-z0-9+/=_-]{6,}|aHR0cDovL[A-Za-z0-9+/=_-]{6,})\b/g;
+  const jsOpenPattern =
+    /(?:(?:window|top|parent|self)\s*\.\s*)?open\s*\(\s*(['"`])([^'"`]+)\1/gi;
+  const jsLocationPattern =
+    /(?:(?:window|document|top|parent|self)\s*\.\s*)?location(?:\s*\.\s*(?:href|assign|replace))?\s*(?:=|\()\s*(['"`])([^'"`]+)\1/gi;
+  const nonUrlTokens = new Set([
+    "true",
+    "false",
+    "null",
+    "undefined",
+    "none",
+    "auto",
+    "self",
+    "_self",
+    "blank",
+    "_blank",
+    "parent",
+    "_parent",
+    "top",
+    "_top",
+    "modal",
+    "collapse",
+    "dropdown",
+    "tab",
+    "pill",
+    "tooltip",
+    "popover",
+    "offcanvas",
+    "button",
+    "submit",
+    "reset",
+  ]);
+
+  const candidates = new Set();
+  const templateElements = new WeakSet();
+  const collectFromRoot = (root, insideTemplate = false) => {
+    if (!root?.querySelectorAll) return;
+    for (const element of root.querySelectorAll("*")) {
+      if (element.closest?.("[data-resource-origins-dialog]")) continue;
+      candidates.add(element);
+      if (insideTemplate) templateElements.add(element);
+      if (element instanceof HTMLTemplateElement && element.content) {
+        collectFromRoot(element.content, true);
+      }
+      if (element.shadowRoot) {
+        collectFromRoot(element.shadowRoot, insideTemplate);
+      }
+    }
+  };
+
+  collectFromRoot(document, false);
+  for (const element of registry?.deniedElements?.keys() ?? []) {
+    if (element instanceof Element) candidates.add(element);
+  }
+  for (const element of registry?.autoDisabledElements?.keys() ?? []) {
+    if (element instanceof Element) candidates.add(element);
+  }
+  for (const element of registry?.manualDisplayNoneElements?.keys() ?? []) {
+    if (element instanceof Element) candidates.add(element);
+  }
+  for (const target of registry?.trackedTargets ?? []) {
+    if (target instanceof Element) candidates.add(target);
+  }
+
+  const cleanCandidateUrl = (raw) => {
+    if (typeof raw !== "string") return "";
+    return raw.trim().replace(/[),.;'"`]+$/, "");
+  };
+
+  let currentPageUrl = null;
+  try {
+    currentPageUrl = new URL(location.href);
+  } catch {}
+
+  const isDownloadUrl = (resolved, element = null, source = "") => {
+    if (resolved.protocol === "magnet:" || resolved.protocol === "ftp:") return true;
+    if (element instanceof Element && element.hasAttribute("download")) return true;
+    if (downloadAttributeNamePattern.test(source)) return true;
+    if (downloadExtensionPattern.test(resolved.pathname) || downloadExtensionPattern.test(resolved.search)) {
+      return true;
+    }
+    if (downloadPathOrParamPattern.test(`${resolved.pathname}${resolved.search}`)) {
+      return true;
+    }
+    return false;
+  };
+
+  const isExcludedResourceUrl = (resolved, element = null, source = "") => {
+    if (excludedHostPattern.test(resolved.hostname)) return true;
+    if (
+      excludedAssetExtensionPattern.test(resolved.pathname) ||
+      excludedAssetExtensionPattern.test(resolved.search) ||
+      excludedAssetQueryPattern.test(resolved.search)
+    ) {
+      return true;
+    }
+    // Ignore same-page anchors (#section) unless they are SPA routes (#/...) or explicit downloads.
+    if (
+      currentPageUrl &&
+      resolved.protocol === currentPageUrl.protocol &&
+      resolved.host === currentPageUrl.host &&
+      resolved.pathname === currentPageUrl.pathname &&
+      resolved.search === currentPageUrl.search &&
+      !isDownloadUrl(resolved, element, source)
+    ) {
+      if (!resolved.hash || !/^#!?\/.+/.test(resolved.hash)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const normalizeNavigableUrl = (raw, allowRelative = false, element = null, source = "") => {
+    const cleaned = cleanCandidateUrl(raw);
+    if (!cleaned || cleaned === "#" || cleaned.startsWith("#")) return null;
+    if (/^(?:javascript|data|blob|vbscript|about|mailto|tel):/i.test(cleaned)) return null;
+
+    if (!allowRelative) {
+      if (!/^(?:(?:https?|ftp):\/\/|\/\/[a-z0-9.-]+\.[a-z]{2,}|magnet:\?)/i.test(cleaned)) {
+        return null;
+      }
+    } else {
+      const lower = cleaned.toLowerCase();
+      if (nonUrlTokens.has(lower)) return null;
+      if (/^[a-z0-9_-]+$/i.test(cleaned) && !cleaned.includes(".")) return null;
+      if (/^\.[a-z0-9_-]+$/i.test(cleaned)) return null;
+      if (/\s/.test(cleaned) && !/^(?:https?|ftp):\/\//i.test(cleaned)) return null;
+      const looksValidRelativeOrAbsolute =
+        /^(?:(?:https?|ftp):\/\/|\/\/[a-z0-9.-]+\.[a-z]{2,}|magnet:\?|\/(?!\/)|\.{1,2}\/|\?)/i.test(
+          cleaned
+        ) ||
+        /^[a-z0-9._~-]+\/[a-z0-9._~/?#[\]@!$&'()*+,;=%-]*/i.test(cleaned) ||
+        /^[a-z0-9._~-]+\.(?:html?|php|aspx?|jsp|htm|pdf|zip|rar|7z|tar|gz|tgz|bz2|xz|iso|exe|msi|dmg|pkg|deb|rpm|apk|mp4|mkv|avi|mov|webm|mp3|flac|wav|m3u8|torrent)(?:[?#].*)?$/i.test(
+          cleaned
+        );
+      if (!looksValidRelativeOrAbsolute) return null;
+    }
+
+    try {
+      const resolved = new URL(cleaned, document.baseURI);
+      if (!["http:", "https:", "ftp:", "magnet:"].includes(resolved.protocol)) {
+        return null;
+      }
+      if (isExcludedResourceUrl(resolved, element, source)) return null;
+      return resolved.href;
+    } catch {
+      return null;
+    }
+  };
+
+  const decodeBase64Candidate = (encoded) => {
+    try {
+      const normalized = encoded.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+      const decoded = atob(padded).trim();
+      return normalizeNavigableUrl(decoded, false);
+    } catch {
+      return null;
+    }
+  };
+
+  const isElementVisiblyHidden = (element) => {
+    if (!element.isConnected || templateElements.has(element)) return true;
+    if (element.hidden || element.closest?.("[hidden], [aria-hidden='true']")) return true;
+    if (
+      registry?.autoDisabledElements?.has(element) ||
+      registry?.manualDisplayNoneElements?.has(element)
+    ) {
+      return true;
+    }
+    try {
+      const style = getComputedStyle(element);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        Number.parseFloat(style.opacity) === 0
+      ) {
+        return true;
+      }
+    } catch {}
+    if (element.tagName === "AREA") return false;
+    const bounds = element.getBoundingClientRect();
+    if (bounds.width > 0 && bounds.height > 0) return false;
+    for (const child of element.children ?? []) {
+      const childBounds = child.getBoundingClientRect();
+      if (childBounds.width > 0 && childBounds.height > 0) return false;
+    }
+    return true;
+  };
+
+  const matchedElements = [];
+  const elementIndices = new Map();
+  const getTargetIndex = (element) => {
+    if (!(element instanceof Element)) return null;
+    let index = elementIndices.get(element);
+    if (index === undefined) {
+      index = matchedElements.length;
+      matchedElements.push(element);
+      elementIndices.set(element, index);
+    }
+    return index;
+  };
+
+  const linksByUrl = new Map();
+  const addLink = (url, element, source, isHiddenSource, isVisibleHref = false, extraLabel = "") => {
+    if (!url) return;
+    let resolvedUrl;
+    try {
+      resolvedUrl = new URL(url);
+    } catch {
+      return;
+    }
+    if (isExcludedResourceUrl(resolvedUrl, element, source)) return;
+    const isDownload = isDownloadUrl(resolvedUrl, element, source);
+    const tag = element instanceof Element ? element.tagName.toLowerCase() : "";
+    const label =
+      extraLabel ||
+      (element instanceof Element
+        ? element.getAttribute("aria-label") ||
+          element.getAttribute("title") ||
+          element.getAttribute("alt") ||
+          element.textContent?.trim().replace(/\s+/g, " ").slice(0, 100) ||
+          ""
+        : "");
+    const existing = linksByUrl.get(url);
+    if (existing) {
+      if (!existing.sources.includes(source)) existing.sources.push(source);
+      if (isHiddenSource) existing.hasHiddenSource = true;
+      if (isVisibleHref) existing.hasVisibleHref = true;
+      if (isDownload) existing.isDownload = true;
+      existing.isHidden = existing.hasHiddenSource || !existing.hasVisibleHref;
+      if (!existing.label && label) existing.label = label;
+      if (existing.targetIndex == null && element instanceof Element && element.isConnected) {
+        existing.targetIndex = getTargetIndex(element);
+        existing.tag = tag;
+        existing.selector = createSelector(element);
+      }
+      existing.occurrences += 1;
+    } else {
+      const connected = element instanceof Element && element.isConnected;
+      const hasHiddenSource = Boolean(isHiddenSource);
+      const hasVisibleHref = Boolean(isVisibleHref);
+      linksByUrl.set(url, {
+        url,
+        tag,
+        selector: element instanceof Element ? createSelector(element) : "",
+        label,
+        sources: [source],
+        hasHiddenSource,
+        hasVisibleHref,
+        isHidden: hasHiddenSource || !hasVisibleHref,
+        isDownload,
+        connected,
+        targetIndex: connected ? getTargetIndex(element) : null,
+        scanKey: "lastLinksScan",
+        occurrences: 1,
+        frameUrl: location.href,
+        frameDepth,
+      });
+    }
+
+    // Extract nested redirect/target URLs inside query parameters.
+    try {
+      for (const [paramKey, paramValue] of resolvedUrl.searchParams.entries()) {
+        if (!paramValue || paramValue.length < 8) continue;
+        const nestedDirect = normalizeNavigableUrl(paramValue, false, element, `paramètre ${paramKey}`);
+        if (nestedDirect && nestedDirect !== url) {
+          addLink(nestedDirect, element, `paramètre ${paramKey}`, true, false, label);
+        }
+        for (const match of paramValue.matchAll(base64UrlPattern)) {
+          const decoded = decodeBase64Candidate(match[1]);
+          if (decoded && decoded !== url) {
+            addLink(decoded, element, `base64 (${paramKey})`, true, false, label);
+          }
+        }
+      }
+    } catch {}
+  };
+
+  const extractUrlsFromCodeOrText = (text, element, sourcePrefix) => {
+    if (typeof text !== "string" || !text) return;
+
+    for (const match of text.matchAll(explicitUrlPattern)) {
+      const normalized = normalizeNavigableUrl(match[0], false, element, sourcePrefix);
+      if (normalized) addLink(normalized, element, sourcePrefix, true);
+    }
+    for (const match of text.matchAll(encodedUrlPattern)) {
+      try {
+        const decoded = decodeURIComponent(match[0]);
+        const normalized = normalizeNavigableUrl(decoded, false, element, sourcePrefix);
+        if (normalized) addLink(normalized, element, `${sourcePrefix} (encodé)`, true);
+      } catch {}
+    }
+    for (const match of text.matchAll(base64UrlPattern)) {
+      const decoded = decodeBase64Candidate(match[1]);
+      if (decoded) addLink(decoded, element, `${sourcePrefix} (base64)`, true);
+    }
+    for (const match of text.matchAll(jsOpenPattern)) {
+      const normalized = normalizeNavigableUrl(match[2], true, element, sourcePrefix);
+      if (normalized) addLink(normalized, element, `${sourcePrefix} (window.open)`, true);
+    }
+    for (const match of text.matchAll(jsLocationPattern)) {
+      const normalized = normalizeNavigableUrl(match[2], true, element, sourcePrefix);
+      if (normalized) addLink(normalized, element, `${sourcePrefix} (location)`, true);
+    }
+  };
+
+  for (const element of candidates) {
+    if (!(element instanceof Element) || ignoredTags.has(element.tagName)) continue;
+
+    const elementHidden = isElementVisiblyHidden(element);
+    const isAnchorLike =
+      element.tagName === "A" || element.tagName === "AREA" || element.tagName === "a";
+
+    for (const attr of element.attributes ?? []) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value?.trim() ?? "";
+      if (!value || ignoredAttributePattern.test(name)) {
+        continue;
+      }
+
+      if ((name === "href" || name === "xlink:href") && isAnchorLike) {
+        if (/^javascript:/i.test(value)) {
+          extractUrlsFromCodeOrText(value.slice(11), element, "href (javascript:)");
+          continue;
+        }
+        const normalized = normalizeNavigableUrl(value, true, element, name);
+        if (normalized) {
+          const sourceLabel = elementHidden
+            ? templateElements.has(element)
+              ? "href (<template>)"
+              : !element.isConnected
+                ? "href (hors DOM)"
+                : "href (DOM masqué)"
+            : "href";
+          addLink(normalized, element, sourceLabel, false, !elementHidden);
+        }
+        continue;
+      }
+
+      if (name.startsWith("on")) {
+        extractUrlsFromCodeOrText(value, element, name);
+        continue;
+      }
+
+      const isUrlAttr = urlAttributeNamePattern.test(name);
+      if (isUrlAttr) {
+        if (/^javascript:/i.test(value)) {
+          extractUrlsFromCodeOrText(value.slice(11), element, `${name} (javascript:)`);
+          continue;
+        }
+        const normalized = normalizeNavigableUrl(value, true, element, name);
+        if (normalized) {
+          addLink(normalized, element, name, true);
+          continue;
+        }
+      }
+
+      // Fallback: inspect other attributes for embedded URLs, encoded URLs, or base64 URLs.
+      extractUrlsFromCodeOrText(value, element, name);
+    }
+
+    // Check denied state recorded by the extension.
+    const deniedState = registry?.deniedElements?.get(element);
+    if (deniedState?.url) {
+      const normalized = normalizeNavigableUrl(deniedState.url, true);
+      if (normalized) addLink(normalized, element, "Refusé (deny)", true);
+    }
+
+    // Check instrumented interaction listeners for hardcoded URLs or window.open/location calls.
+    const listeners = registry?.listenersByTarget?.get(element);
+    if (listeners) {
+      for (const [eventType, registrations] of listeners.entries()) {
+        if (
+          ![
+            "click",
+            "auxclick",
+            "mousedown",
+            "mouseup",
+            "pointerdown",
+            "pointerup",
+            "touchstart",
+            "touchend",
+          ].includes(eventType)
+        ) {
+          continue;
+        }
+        for (const registration of registrations) {
+          try {
+            const fnSource =
+              typeof registration.listener === "function"
+                ? Function.prototype.toString.call(registration.listener)
+                : typeof registration.listener?.handleEvent === "function"
+                  ? Function.prototype.toString.call(registration.listener.handleEvent)
+                  : "";
+            if (fnSource && !fnSource.includes("[native code]")) {
+              extractUrlsFromCodeOrText(fnSource, element, `listener ${eventType}`);
+            }
+          } catch {}
+        }
+      }
+    }
+  }
+
+  if (registry) registry.lastLinksScan = matchedElements;
+  window[Symbol.for("resource-origins.last-links-scan")] = matchedElements;
+
+  return {
+    pageUrl: location.href,
+    links: [...linksByUrl.values()],
+  };
 }
 

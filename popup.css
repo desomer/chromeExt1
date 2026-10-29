@@ -1249,6 +1249,187 @@ dialog#search-dialog {
   background: var(--blue);
 }
 
+dialog#page-links-dialog {
+  width: calc(100% - 16px);
+  max-width: 414px;
+  height: calc(100% - 16px);
+  max-height: 584px;
+  margin: auto;
+  padding: 12px;
+  color: var(--ink);
+  background: linear-gradient(135deg, #1a3142, #0f1d2e 70%, #1d3238);
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+}
+
+dialog#page-links-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+#page-links-dialog::backdrop {
+  background: rgba(5, 13, 23, 0.76);
+}
+
+.page-links-header {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.page-links-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.page-links-header .elements-status {
+  margin: 3px 0 0;
+}
+
+.page-links-header-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+}
+
+.page-links-header-actions form {
+  margin: 0;
+}
+
+.page-links-search-field {
+  display: block;
+  margin-top: 8px;
+}
+
+.page-links-filters {
+  margin-top: 7px;
+  margin-bottom: 8px;
+}
+
+.page-links-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.page-link-row {
+  padding: 9px 10px;
+}
+
+.page-link-row.page-link-hidden {
+  border-color: rgba(240, 189, 104, 0.35);
+  box-shadow: inset 3px 0 0 var(--amber);
+}
+
+.page-link-row-header {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.page-link-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.page-link-badge-hidden {
+  color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.page-link-badge-download {
+  padding: 2px 5px;
+  color: #8de0ac;
+  font-size: 9px;
+  font-weight: 700;
+  background: #193c30;
+  border-radius: 3px;
+}
+
+.page-link-badge-external {
+  padding: 2px 5px;
+  color: var(--green);
+  font-size: 9px;
+  font-weight: 700;
+  background: var(--green-soft);
+  border-radius: 3px;
+}
+
+.page-link-badge-source {
+  padding: 2px 5px;
+  color: var(--blue);
+  font-family: Consolas, monospace;
+  font-size: 9px;
+  background: var(--blue-soft);
+  border-radius: 3px;
+}
+
+.page-link-open-button {
+  flex: none;
+  min-height: 22px;
+  padding: 2px 8px;
+  font-size: 10px;
+}
+
+.page-link-anchor {
+  display: block;
+  margin-top: 6px;
+  color: var(--green);
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  cursor: pointer;
+}
+
+.page-link-anchor:hover {
+  color: var(--blue);
+}
+
+.page-link-anchor:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.page-link-label {
+  margin-top: 4px;
+  color: var(--ink) !important;
+  font-size: 10px;
+}
+
+.page-link-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.page-link-meta .element-frame {
+  margin-top: 0;
+}
+
+.page-link-occurrences {
+  color: var(--muted);
+  font-family: Consolas, monospace;
+  font-size: 9px;
+}
+
 .event-remove-button:focus-visible {
   outline: 1px solid currentColor;
   outline-offset: 1px;

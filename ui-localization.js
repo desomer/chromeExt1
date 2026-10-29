@@ -252,7 +252,28 @@
     "Remove all events": "Remove all events",
     "Enable context menu": "Enable context menu",
     "Search": "Search",
-    "Check": "Check"
+    "Check": "Check",
+    "Liens de la page": "Page links",
+    "Afficher tous les liens de la page, y compris les liens cachés": "Show all links on the page, including hidden links",
+    "Analyse des liens…": "Scanning links…",
+    "Relancer la détection des liens": "Rescan page links",
+    "Fermer": "Close",
+    "Filtrer les liens": "Filter links",
+    "Ex. https, data-url, download, .mp4": "E.g. https, data-url, download, .mp4",
+    "Filtres des liens": "Link filters",
+    "Cachés": "Hidden",
+    "Liens issus d’attributs cachés (data-url, onclick…), de scripts ou d’éléments masqués": "Links from hidden attributes (data-url, onclick…), scripts or hidden elements",
+    "Liens de téléchargement de fichiers ou médias": "File or media download links",
+    "Téléchargement": "Download",
+    "Externes": "External",
+    "Liens pointant vers un autre domaine": "Links pointing to another domain",
+    "Aucun lien ne correspond à ce filtre.": "No links match this filter.",
+    "Aucun lien détecté sur cette page.": "No links detected on this page.",
+    "Caché": "Hidden",
+    "Externe": "External",
+    "Ouvrir": "Open",
+    "href (DOM masqué)": "href (hidden DOM)",
+    "href (hors DOM)": "href (detached DOM)"
   };
   const frenchByEnglish = Object.fromEntries(
     Object.entries(englishByFrench).map(([french, english]) => [english, french])
@@ -325,6 +346,10 @@
     [/^Par défaut · (.+)$/, ([, state]) => `Default · ${translate(state)}`],
     [/^(.+) · (À vérifier|Analyse…|Âge…|Indisponible|Aucune correspondance|Clé requise)$/, ([, provider, state]) => `${provider} · ${translate(state)}`],
     [/^([\d]+) (cible|cibles|élément|éléments) (détectée|détectées|modifié|modifiés) dans (\d+) frames?( · \d+ inaccessibles?)?$/, ([, count, , state, frames, skipped]) => `${count} ${state.startsWith("détect") ? "targets detected" : "elements modified"} in ${frames} frame${frames === "1" ? "" : "s"}${skipped ? ` · ${skipped.match(/\d+/)[0]} inaccessible` : ""}`],
+    [/^(\d+) liens? \((\d+) cachés?\) dans (\d+) frames?( · \d+ inaccessibles?)?$/, ([, total, hidden, frames, skipped]) => `${total} link${total === "1" ? "" : "s"} (${hidden} hidden) in ${frames} frame${frames === "1" ? "" : "s"}${skipped ? ` · ${skipped.match(/\d+/)[0]} inaccessible` : ""}`],
+    [/^Ouvrir (.+)$/, ([, url]) => `Open ${url}`],
+    [/^paramètre (.+)$/, ([, param]) => `param ${param}`],
+    [/^(.+) \(encodé\)$/, ([, src]) => `${src} (encoded)`],
     [/^(\d+) frames? analysées?( · \d+ inaccessibles?)?$/, ([, count, skipped]) => `${count} frame${count === "1" ? "" : "s"} scanned${skipped ? ` · ${skipped.match(/\d+/)[0]} inaccessible` : ""}`],
     [/^(\d+) (événements?|déclencheurs?|gestionnaires?) (.+) retirés?(?: sur (\d+) (éléments?|cibles?))?\.$/, ([, count, kind, suffix, affected]) => `${count} ${kind.startsWith("événement") ? "event" : kind.startsWith("déclencheur") ? "trigger" : "handler"}${count === "1" ? "" : "s"} ${suffix === "contextmenu" ? "contextmenu " : ""}removed${affected ? ` from ${affected} target${affected === "1" ? "" : "s"}` : ""}.`],
     [/^(.+) les ressources de (.+)$/, ([, action, domain]) => `${translate(action)} resources from ${domain}`]

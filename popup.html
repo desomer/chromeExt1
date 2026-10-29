@@ -366,6 +366,16 @@
             <h2>Éléments modifiés</h2>
             <p>Refusés (deny), largeur 0 px ou masqués par l’extension</p>
           </div>
+          <div class="elements-actions">
+            <button
+              id="show-page-links"
+              class="refresh-button"
+              type="button"
+              title="Afficher tous les liens de la page, y compris les liens cachés"
+            >
+              Liens de la page
+            </button>
+          </div>
         </div>
         <p id="modified-status" class="elements-status">
           Ouvrez cet onglet pour analyser la page.
@@ -373,6 +383,42 @@
         <div id="modified-results" class="elements-results"></div>
       </section>
     </main>
+
+    <dialog id="page-links-dialog" aria-labelledby="page-links-dialog-title">
+      <div class="page-links-header">
+        <div>
+          <h2 id="page-links-dialog-title">Liens de la page</h2>
+          <p id="page-links-status" class="elements-status">Analyse des liens…</p>
+        </div>
+        <div class="page-links-header-actions">
+          <button id="refresh-page-links" class="refresh-button" type="button" title="Relancer la détection des liens">
+            Actualiser
+          </button>
+          <form method="dialog">
+            <button class="refresh-button" type="submit">Fermer</button>
+          </form>
+        </div>
+      </div>
+      <label class="search-field page-links-search-field">
+        <span>Filtrer les liens</span>
+        <input id="page-links-search" type="search" placeholder="Ex. https, data-url, download, .mp4" />
+      </label>
+      <div class="origin-filters page-links-filters" role="group" aria-label="Filtres des liens">
+        <button type="button" class="origin-filter is-active" data-link-filter="all" aria-pressed="true">
+          Tous <span class="filter-count"></span>
+        </button>
+        <button type="button" class="origin-filter" data-link-filter="hidden" aria-pressed="false" title="Liens issus d’attributs cachés (data-url, onclick…), de scripts ou d’éléments masqués">
+          Cachés <span class="filter-count"></span>
+        </button>
+        <button type="button" class="origin-filter" data-link-filter="download" aria-pressed="false" title="Liens de téléchargement de fichiers ou médias">
+          Téléchargements <span class="filter-count"></span>
+        </button>
+        <button type="button" class="origin-filter" data-link-filter="external" aria-pressed="false" title="Liens pointant vers un autre domaine">
+          Externes <span class="filter-count"></span>
+        </button>
+      </div>
+      <div id="page-links-results" class="elements-results page-links-results"></div>
+    </dialog>
 
     <dialog id="search-dialog" aria-labelledby="search-dialog-title">
       <h2 id="search-dialog-title">Rechercher un domaine</h2>

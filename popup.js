@@ -439,6 +439,21 @@ document
 document
   .querySelector("#remove-contextmenu")
   .addEventListener("click", removeAllContextMenuEvents);
+document
+  .querySelector("#show-page-links")
+  .addEventListener("click", openPageLinksDialog);
+document
+  .querySelector("#refresh-page-links")
+  .addEventListener("click", scanPageLinks);
+document
+  .querySelector("#page-links-search")
+  .addEventListener("input", () => renderPageLinks());
+for (const button of document.querySelectorAll("[data-link-filter]")) {
+  button.addEventListener("click", () => setPageLinkFilter(button.dataset.linkFilter));
+}
+document.querySelector("#page-links-dialog").addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) event.currentTarget.close();
+});
 
 // If the popup was opened from the "Afficher dans l'onglet Éléments" context menu entry,
 // jump straight to that element instead of the default resource scan.

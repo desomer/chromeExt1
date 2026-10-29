@@ -782,3 +782,360 @@ async function removeAllContextMenuEvents() {
   }
 }
 
+let currentPageLinksScan = null;
+let activePageLinkFilter = "all";
+
+function getLinkHostname(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname || parsed.protocol.replace(":", "");
+  } catch {
+    return "";
+  }
+}
+
+function isExternalPageLink(linkUrl, pageRootDomain) {
+  if (!pageRootDomain) return false;
+  try {
+    const parsed = new URL(linkUrl);
+    if (!["http:", "https:", "ftp:"].includes(parsed.protocol) || !parsed.hostname) {
+      return false;
+    }
+    return getRootDomain(parsed.hostname) !== pageRootDomain;
+  } catch {
+    return false;
+  }
+}
+
+const EXCLUDED_PAGE_LINK_ASSET_PATTERN =
+  /\.(?:png|jpe?g|gif|webp|avif|svgz?|ico|bmp|tiff?|apng|jfif|pjp(?:eg)?|cur|heic|heif|raw|js|mjs|cjs|jsx|ts|tsx|css|scss|sass|less|map|wasm|woff2?|ttf|otf|eot|webmanifest|json|xml|rss|atom|vtt|srt)(?:$|[?#&])/i;
+const DOWNLOAD_PAGE_LINK_PATTERN =
+  /\.(?:zip|rar|7z|tar|gz|tgz|bz2|xz|iso|dmg|pkg|exe|msi|deb|rpm|apk|ipa|jar|bin|pdf|docx?|xlsx?|pptx?|odt|ods|odp|csv|txt|rtf|epub|mobi|mp4|mkv|avi|mov|webm|flv|wmv|mp3|flac|wav|ogg|m4a|aac|m3u8|torrent)(?:$|[?#&])/i;
+
+function mergeFrameLinks(frameResults, history, framesById, mainPageUrl) {
+  const getAncestorFrames = (frameId) => {
+    const ancestors = [];
+    let childFrame = framesById.get(frameId);
+    while (childFrame && childFrame.parentFrameId >= 0) {
+      const parentFrame = framesById.get(childFrame.parentFrameId);
+      if (!parentFrame) break;
+      ancestors.push({ frameId: parentFrame.frameId, childUrl: childFrame.url });
+      childFrame = parentFrame;
+    }
+    return ancestors;
+  };
+
+  let pageRootDomain = "";
+  try {
+    pageRootDomain = getRootDomain(new URL(mainPageUrl).hostname);
+  } catch {}
+
+  const mergedByUrl = new Map();
+  const upsert = (entry) => {
+    try {
+      const parsed = new URL(entry.url);
+      if (
+        EXCLUDED_PAGE_LINK_ASSET_PATTERN.test(parsed.pathname) ||
+        EXCLUDED_PAGE_LINK_ASSET_PATTERN.test(parsed.search)
+      ) {
+        return;
+      }
+    } catch {
+      return;
+    }
+    const existing = mergedByUrl.get(entry.url);
+    if (!existing) {
+      mergedByUrl.set(entry.url, {
+        ...entry,
+        sources: [...(entry.sources ?? [])],
+        isDownload: Boolean(entry.isDownload) || DOWNLOAD_PAGE_LINK_PATTERN.test(entry.url),
+        isExternal: isExternalPageLink(entry.url, pageRootDomain),
+        hostname: getLinkHostname(entry.url),
+      });
+      return;
+    }
+
+    for (const src of entry.sources ?? []) {
+      if (!existing.sources.includes(src)) existing.sources.push(src);
+    }
+    existing.hasHiddenSource ||= Boolean(entry.hasHiddenSource);
+    existing.hasVisibleHref ||= Boolean(entry.hasVisibleHref);
+    existing.isDownload ||= Boolean(entry.isDownload);
+    existing.isHidden = existing.hasHiddenSource || !existing.hasVisibleHref;
+    existing.occurrences = (existing.occurrences ?? 1) + (entry.occurrences ?? 1);
+    if (!existing.label && entry.label) existing.label = entry.label;
+    if (existing.targetIndex == null && entry.targetIndex != null) {
+      existing.targetIndex = entry.targetIndex;
+      existing.frameId = entry.frameId;
+      existing.ancestorFrames = entry.ancestorFrames;
+      existing.tag = entry.tag;
+      existing.selector = entry.selector;
+      existing.connected = entry.connected;
+    }
+  };
+
+  for (const { result, frameId } of frameResults) {
+    const ancestorFrames = getAncestorFrames(frameId);
+    for (const link of result.links ?? []) {
+      upsert({
+        ...link,
+        frameId,
+        ancestorFrames,
+      });
+    }
+  }
+
+  for (const entry of history ?? []) {
+    if (!entry.url) continue;
+    try {
+      const resolved = new URL(entry.url, mainPageUrl || undefined).href;
+      upsert({
+        url: resolved,
+        tag: entry.tag ?? "",
+        selector: entry.selector ?? "",
+        label: entry.label ?? "",
+        sources: ["Refusé (deny)"],
+        hasHiddenSource: true,
+        hasVisibleHref: false,
+        isHidden: true,
+        connected: false,
+        targetIndex: null,
+        scanKey: "lastLinksScan",
+        occurrences: 1,
+        frameUrl: entry.frameUrl ?? mainPageUrl ?? "",
+        frameDepth: entry.frameDepth ?? 0,
+      });
+    } catch {}
+  }
+
+  // Show hidden links first so data-url / onclick / denied links stand out immediately.
+  return [...mergedByUrl.values()].sort((a, b) => {
+    if (a.isHidden !== b.isHidden) return a.isHidden ? -1 : 1;
+    return a.url.localeCompare(b.url);
+  });
+}
+
+function updatePageLinkFilterCounts(links) {
+  const counts = {
+    all: links.length,
+    hidden: links.filter((link) => link.isHidden).length,
+    download: links.filter((link) => link.isDownload).length,
+    external: links.filter((link) => link.isExternal).length,
+  };
+  for (const button of document.querySelectorAll("[data-link-filter]")) {
+    const filter = button.dataset.linkFilter;
+    const countNode = button.querySelector(".filter-count");
+    if (countNode) countNode.textContent = String(counts[filter] ?? 0);
+    const isActive = filter === activePageLinkFilter;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  }
+}
+
+function renderPageLinks() {
+  const results = document.querySelector("#page-links-results");
+  const status = document.querySelector("#page-links-status");
+  const searchInput = document.querySelector("#page-links-search");
+  results.replaceChildren();
+
+  if (!currentPageLinksScan) return;
+
+  const { links, framesScanned, framesSkipped } = currentPageLinksScan;
+  const hiddenCount = links.filter((link) => link.isHidden).length;
+  updatePageLinkFilterCounts(links);
+
+  status.className = "elements-status";
+  status.textContent = `${links.length} lien${links.length > 1 ? "s" : ""} (${hiddenCount} caché${
+    hiddenCount > 1 ? "s" : ""
+  }) dans ${framesScanned} frame${framesScanned > 1 ? "s" : ""}${
+    framesSkipped ? ` · ${framesSkipped} inaccessible${framesSkipped > 1 ? "s" : ""}` : ""
+  }`;
+
+  const query = (searchInput?.value ?? "").trim().toLowerCase();
+  const filtered = links.filter((link) => {
+    if (activePageLinkFilter === "hidden" && !link.isHidden) return false;
+    if (activePageLinkFilter === "download" && !link.isDownload) return false;
+    if (activePageLinkFilter === "external" && !link.isExternal) return false;
+    if (!query) return true;
+    const haystack = [
+      link.url,
+      link.hostname,
+      link.label,
+      link.tag,
+      link.selector,
+      ...(link.sources ?? []),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(query);
+  });
+
+  if (!filtered.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = links.length
+      ? "Aucun lien ne correspond à ce filtre."
+      : "Aucun lien détecté sur cette page.";
+    results.append(empty);
+    return;
+  }
+
+  for (const link of filtered) {
+    const row = document.createElement("article");
+    row.className = `element-row page-link-row${link.isHidden ? " page-link-hidden" : ""}`;
+    if (link.targetIndex != null && link.frameId != null) {
+      row.addEventListener("mouseenter", () => highlightPointerElement(link, true));
+      row.addEventListener("mouseleave", () => highlightPointerElement(link, false));
+    }
+
+    const header = document.createElement("div");
+    header.className = "page-link-row-header";
+
+    const badges = document.createElement("div");
+    badges.className = "page-link-badges";
+
+    if (link.isHidden) {
+      const hiddenBadge = document.createElement("span");
+      hiddenBadge.className = "modification-badge page-link-badge-hidden";
+      hiddenBadge.textContent = "Caché";
+      badges.append(hiddenBadge);
+    }
+
+    if (link.isDownload) {
+      const downloadBadge = document.createElement("span");
+      downloadBadge.className = "page-link-badge-download";
+      downloadBadge.textContent = "Téléchargement";
+      badges.append(downloadBadge);
+    }
+
+    if (link.isExternal) {
+      const externalBadge = document.createElement("span");
+      externalBadge.className = "page-link-badge-external";
+      externalBadge.textContent = "Externe";
+      badges.append(externalBadge);
+    }
+
+    for (const source of link.sources) {
+      const sourceBadge = document.createElement("span");
+      sourceBadge.className = "page-link-badge-source";
+      sourceBadge.textContent = source;
+      badges.append(sourceBadge);
+    }
+
+    if (link.tag) {
+      const tagBadge = document.createElement("strong");
+      tagBadge.className = "element-tag";
+      tagBadge.textContent = `<${link.tag}>`;
+      badges.append(tagBadge);
+    }
+
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.className = "refresh-button page-link-open-button";
+    openButton.textContent = "Ouvrir";
+    openButton.title = `Ouvrir ${link.url}`;
+    openButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      chrome.tabs.create({ url: link.url });
+    });
+
+    header.append(badges, openButton);
+    row.append(header);
+
+    const anchor = document.createElement("a");
+    anchor.className = "page-link-anchor";
+    anchor.href = link.url;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    anchor.textContent = link.url;
+    anchor.title = link.url;
+    anchor.addEventListener("click", (event) => {
+      event.preventDefault();
+      chrome.tabs.create({ url: link.url });
+    });
+    row.append(anchor);
+
+    if (link.label) {
+      const label = document.createElement("p");
+      label.className = "page-link-label";
+      label.textContent = link.label;
+      label.title = link.label;
+      row.append(label);
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "page-link-meta";
+    const frame = document.createElement("span");
+    frame.className = "element-frame";
+    frame.textContent = link.frameDepth
+      ? `Iframe · niveau ${link.frameDepth}`
+      : "Page principale";
+    frame.title = link.frameUrl || "";
+    meta.append(frame);
+
+    if (link.occurrences > 1) {
+      const count = document.createElement("span");
+      count.className = "page-link-occurrences";
+      count.textContent = `×${link.occurrences}`;
+      meta.append(count);
+    }
+    row.append(meta);
+
+    if (link.selector) {
+      const selector = document.createElement("code");
+      selector.textContent = link.selector;
+      selector.title = link.selector;
+      row.append(selector);
+    }
+
+    results.append(row);
+  }
+}
+
+async function scanPageLinks() {
+  const status = document.querySelector("#page-links-status");
+  const results = document.querySelector("#page-links-results");
+  status.className = "elements-status";
+  status.textContent = "Analyse des liens…";
+  results.replaceChildren();
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    activeTabId = tab.id;
+    const historyKey = `modifications:${tab.id}`;
+    const [execution, { [historyKey]: history = [] }] = await Promise.all([
+      executeInEveryFrame(tab.id, inspectPageLinks, [], 5000),
+      chrome.storage.session.get(historyKey),
+    ]);
+    const framesById = new Map(execution.frameTree.map((frame) => [frame.frameId, frame]));
+    const mainFrameUrl =
+      execution.results.find(({ frameId }) => frameId === 0)?.result?.pageUrl ??
+      tab.url ??
+      execution.results[0]?.result?.pageUrl ??
+      "";
+    const links = mergeFrameLinks(execution.results, history, framesById, mainFrameUrl);
+    currentPageLinksScan = {
+      links,
+      framesScanned: execution.results.length,
+      framesSkipped: execution.framesSkipped,
+    };
+    renderPageLinks();
+  } catch {
+    status.className = "elements-status elements-warning";
+    status.textContent = "Cette page ne peut pas être analysée.";
+  }
+}
+
+async function openPageLinksDialog() {
+  const dialog = document.querySelector("#page-links-dialog");
+  if (!dialog.open) dialog.showModal();
+  await scanPageLinks();
+}
+
+function setPageLinkFilter(filter) {
+  activePageLinkFilter = filter;
+  renderPageLinks();
+}
+
