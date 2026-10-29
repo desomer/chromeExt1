@@ -127,6 +127,10 @@ document.querySelector("#search").addEventListener("input", (event) => {
   renderResults(event.target.value);
 });
 
+for (const button of document.querySelectorAll("[data-origin-filter]")) {
+  button.addEventListener("click", () => setOriginFilter(button.dataset.originFilter));
+}
+
 document.querySelector("#check-reputation").addEventListener("click", checkDomainReputations);
 document.querySelector("#commit-temporary").addEventListener("click", commitTemporaryChanges);
 document.querySelector("#rollback-temporary").addEventListener("click", rollbackTemporaryChanges);

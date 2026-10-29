@@ -202,7 +202,7 @@ main {
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  padding: 16px 20px 20px;
+  padding: 10px 15px 10px;
 }
 
 #resources-panel:not([hidden]),
@@ -447,6 +447,7 @@ main {
 .search-field span {
   display: block;
   margin-bottom: 5px;
+  margin-bottom: 5px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;
@@ -454,7 +455,7 @@ main {
 
 .search-field input {
   width: 100%;
-  height: 36px;
+  height: 26px;
   padding: 0 10px;
   color: var(--ink);
   background: var(--surface);
@@ -466,6 +467,54 @@ main {
 .search-field input:focus {
   border-color: var(--green);
   box-shadow: 0 0 0 2px rgba(98, 168, 255, 0.18);
+}
+
+.origin-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.origin-filter {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 9px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--surface);
+  border: 1px solid #354861;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.origin-filter:hover {
+  color: var(--ink);
+  border-color: var(--green);
+}
+
+.origin-filter.is-active {
+  color: var(--ink);
+  background: linear-gradient(135deg, rgba(98, 168, 255, 0.34), rgba(114, 213, 238, 0.17));
+  border-color: var(--green);
+}
+
+.origin-filter:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.filter-count {
+  min-width: 14px;
+  padding: 0 4px;
+  font-size: 10px;
+  text-align: center;
+  background: rgba(5, 13, 23, 0.45);
+  border-radius: 7px;
 }
 
 .blocking-note {
@@ -540,6 +589,8 @@ main {
 }
 
 .origin-group.origin-blocked {
+  background: linear-gradient(135deg, rgba(255, 35, 27, 0.16), rgba(64, 37, 44, 0.72) 52%, rgba(255, 35, 27, 0.08));
+  border-color: rgba(255, 35, 27, 0.32);
   box-shadow: inset 3px 0 0 var(--red);
 }
 

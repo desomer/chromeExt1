@@ -113,6 +113,30 @@
             <input id="search" type="search" placeholder="Ex. cdn, analytics, app.js" />
           </label>
 
+          <div class="origin-filters" role="group" aria-label="Filtres des domaines">
+            <button type="button" class="origin-filter is-active" data-origin-filter="all" aria-pressed="true">
+              Tous <span class="filter-count"></span>
+            </button>
+            <button type="button" class="origin-filter" data-origin-filter="blocked" aria-pressed="false" title="Domaines actuellement bloqués">
+              Bloqués <span class="filter-count"></span>
+            </button>
+            <button type="button" class="origin-filter" data-origin-filter="temporary" aria-pressed="false" title="Domaines bloqués ou débloqués temporairement">
+              Temporaires <span class="filter-count"></span>
+            </button>
+            <button type="button" class="origin-filter" data-origin-filter="recently-blocked" aria-pressed="false" title="Domaines bloqués depuis moins de 24 h">
+              Bloqués récemment <span class="filter-count"></span>
+            </button>
+            <button type="button" class="origin-filter" data-origin-filter="late" aria-pressed="false" title="Ressources chargées plus de 5 s après la navigation ou injectées après l’analyse">
+              Chargés tard <span class="filter-count"></span>
+            </button>
+            <button type="button" class="origin-filter" data-origin-filter="risky" aria-pressed="false" title="Correspondance EasyList ou signalement de réputation">
+              À risque <span class="filter-count"></span>
+            </button>
+            <button type="button" class="origin-filter" data-origin-filter="third-party" aria-pressed="false" title="Domaines différents du site visité">
+              Tiers <span class="filter-count"></span>
+            </button>
+          </div>
+
           <p class="blocking-note">
             Le blocage est global pour l’origine. Les requêtes déjà chargées ne sont pas annulées.
           </p>

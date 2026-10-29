@@ -355,6 +355,69 @@ async function evaluateResourcesWithEasyList() {
   }
 }
 
+const RECENT_BLOCK_WINDOW_MS = 24 * 60 * 60 * 1000;
+// Resources whose fetch started this long after navigation are considered loaded late.
+const LATE_LOAD_THRESHOLD_MS = 5000;
+const RISKY_REPUTATION_STATES = new Set(["flagged", "warning", "recent"]);
+let activeOriginFilter = "all";
+
+function isLateResource(resource) {
+  return (
+    resource.startTime === Number.MAX_SAFE_INTEGER ||
+    (Number.isFinite(resource.startTime) && resource.startTime > LATE_LOAD_THRESHOLD_MS)
+  );
+}
+
+function matchesOriginFilter(group, filter, easyListByOrigin) {
+  const hostname = new URL(group.origin).hostname;
+  switch (filter) {
+    case "blocked":
+      return isHostnameBlocked(hostname);
+    case "temporary":
+      return getTemporaryState(hostname) !== null;
+    case "recently-blocked": {
+      const blockedAt = blockedOriginTimestamps[hostname];
+      return (
+        isHostnameBlocked(hostname) &&
+        Number.isFinite(blockedAt) &&
+        Date.now() - blockedAt < RECENT_BLOCK_WINDOW_MS
+      );
+    }
+    case "late":
+      return group.resources.some(isLateResource);
+    case "risky":
+      return (
+        (easyListByOrigin.get(group.origin)?.matched ?? 0) > 0 ||
+        Object.values(domainReputations.get(hostname) ?? {}).some((result) =>
+          RISKY_REPUTATION_STATES.has(result?.state)
+        )
+      );
+    case "third-party":
+      return getRootDomain(hostname) !== getRootDomain(new URL(pageData.pageUrl).hostname);
+    default:
+      return true;
+  }
+}
+
+function updateOriginFilterCounts(groups, easyListByOrigin) {
+  for (const button of document.querySelectorAll("[data-origin-filter]")) {
+    const count = groups.filter((group) =>
+      matchesOriginFilter(group, button.dataset.originFilter, easyListByOrigin)
+    ).length;
+    button.querySelector(".filter-count").textContent = String(count);
+  }
+}
+
+function setOriginFilter(filter) {
+  activeOriginFilter = filter;
+  for (const button of document.querySelectorAll("[data-origin-filter]")) {
+    const isActive = button.dataset.originFilter === filter;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  }
+  renderResults(document.querySelector("#search").value);
+}
+
 function renderResults(query = "") {
   const results = document.querySelector("#results");
   results.replaceChildren();
@@ -380,16 +443,6 @@ function renderResults(query = "") {
     })
     .filter((group) => group.resources.length);
 
-  if (!groups.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty-state";
-    empty.textContent = normalizedQuery
-      ? "Aucune ressource ne correspond à cette recherche."
-      : "Aucune ressource CSS, JavaScript ou iframe détectée.";
-    results.append(empty);
-    return;
-  }
-
   const easyListByOrigin = new Map();
   for (const resource of pageData.orderedResources) {
     const origin = new URL(resource.url).origin;
@@ -403,7 +456,24 @@ function renderResults(query = "") {
     easyListByOrigin.set(origin, status);
   }
 
-  for (const group of groups) {
+  const filteredGroups = groups.filter((group) =>
+    matchesOriginFilter(group, activeOriginFilter, easyListByOrigin)
+  );
+  updateOriginFilterCounts(groups, easyListByOrigin);
+
+  if (!filteredGroups.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = normalizedQuery
+      ? "Aucune ressource ne correspond à cette recherche."
+      : activeOriginFilter !== "all"
+        ? "Aucun domaine ne correspond à ce filtre."
+        : "Aucune ressource CSS, JavaScript ou iframe détectée.";
+    results.append(empty);
+    return;
+  }
+
+  for (const group of filteredGroups) {
     const groupHostname = new URL(group.origin).hostname;
     const isBlocked = isHostnameBlocked(groupHostname);
     const details = document.createElement("details");
@@ -433,8 +503,8 @@ function renderResults(query = "") {
     }
     const reputationBadges = document.createElement("span");
     reputationBadges.className = "origin-reputation";
-    const resultsByProvider = domainReputations.get(groupHostname) ?? {};
-    for (const provider of reputationProviders) {
+    const resultsByProvider = domainReputations.get(groupHostname);
+    for (const provider of resultsByProvider ? reputationProviders : []) {
       const result = resultsByProvider[provider[0]] ?? {
         state: "idle",
         label: "À vérifier",
@@ -495,7 +565,8 @@ function renderResults(query = "") {
       )}`;
       heading.append(blockDate);
     }
-    heading.append(badges, reputationBadges);
+    heading.append(badges);
+    if (resultsByProvider) heading.append(reputationBadges);
 
     const actions = document.createElement("span");
     actions.className = "origin-actions";

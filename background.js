@@ -710,18 +710,24 @@ async function guardCreatedDownload(item) {
   await downloadStartupGraceReady;
   if (Date.now() < downloadControlEnabledAt) return;
 
+  // Pause first so the file does not finish while the confirmation rules are read.
+  const paused = await chrome.downloads.pause(item.id).then(
+    () => true,
+    () => false
+  );
+
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const confirmDownloads = await isConfirmationEnabledForUrl(
     "downloadConfirmationRules",
     tab?.url || item.url
   );
-  if (!confirmDownloads || consumeDownloadApproval(item.url)) return;
-
-  runBestEffort(() => chrome.downloads.cancel(item.id));
-  runBestEffort(() => chrome.downloads.removeFile(item.id));
+  if (!confirmDownloads || consumeDownloadApproval(item.url)) {
+    if (paused) await allowDownload(item.id, item.url);
+    return;
+  }
 
   if (!tab?.id) {
-    approveAndRedownload(item.url);
+    await allowDownload(item.id, item.url);
     return;
   }
 
@@ -730,6 +736,7 @@ async function guardCreatedDownload(item) {
       tab.id,
       {
         action: "show-download-confirmation",
+        downloadId: item.id,
         url: item.url,
         filename: item.filename,
         referrer: item.referrer,
@@ -737,16 +744,54 @@ async function guardCreatedDownload(item) {
       },
       { frameId: 0 }
     );
-    if (!response?.shown) approveAndRedownload(item.url);
+    if (response?.ignored) {
+      await denyDownload(item.id);
+    } else if (!response?.shown) {
+      await allowDownload(item.id, item.url);
+    }
   } catch {
     // The active tab cannot display the confirmation panel; let the download proceed.
-    approveAndRedownload(item.url);
+    await allowDownload(item.id, item.url);
   }
 }
 
-function approveAndRedownload(url) {
+async function getDownload(downloadId) {
+  try {
+    return (await chrome.downloads.search({ id: downloadId }))[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Resuming keeps the original request (cookies, POST body, blob: URL, one-time token).
+// A new GET is only a last resort, because servers often answer it with another file.
+async function allowDownload(downloadId, url) {
+  const item = await getDownload(downloadId);
+  if (item?.state === "complete") return;
+  if (item?.paused || item?.canResume) {
+    try {
+      await chrome.downloads.resume(downloadId);
+      return;
+    } catch {
+      await chrome.downloads.cancel(downloadId).catch(() => {});
+    }
+  } else if (item?.state === "in_progress") {
+    return;
+  }
+
   approvedDownloads.push({ url, expiresAt: Date.now() + APPROVAL_LIFETIME_MS });
-  runBestEffort(() => chrome.downloads.download({ url }));
+  runBestEffort(() => chrome.downloads.download({ url: item?.finalUrl || url }));
+}
+
+async function denyDownload(downloadId) {
+  const item = await getDownload(downloadId);
+  if (!item) return;
+  if (item.state === "in_progress") {
+    await chrome.downloads.cancel(downloadId).catch(() => {});
+  } else if (item.state === "complete") {
+    await chrome.downloads.removeFile(downloadId).catch(() => {});
+  }
+  await chrome.downloads.erase({ id: downloadId }).catch(() => {});
 }
 
 chrome.downloads.onCreated.addListener((item) => {
@@ -1271,7 +1316,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "open-confirmed-download" && sender.tab?.id) {
-    approveAndRedownload(message.url);
+    allowDownload(message.downloadId, message.url);
+    return;
+  }
+
+  if (message.action === "deny-confirmed-download" && sender.tab?.id) {
+    denyDownload(message.downloadId);
     return;
   }
 });

@@ -1,6 +1,9 @@
 (() => {
 const PROMPT_SOURCE = "resource-origins-download-prompt";
 const confirmationQueue = [];
+// Upper bound on pending confirmations (displayed + queued) to resist request floods.
+const MAX_PENDING_CONFIRMATIONS = 20;
+let ignoredConfirmationCount = 0;
 let currentConfirmation = null;
 let promptHost = null;
 let promptPort = null;
@@ -90,20 +93,35 @@ function handlePromptResponse(event) {
     return;
   }
 
-  if (event.data.action === "allow") {
-    sendMessageBestEffort({
-      action: "open-confirmed-download",
-      url: currentConfirmation.url,
-    });
-  }
+  sendMessageBestEffort({
+    action:
+      event.data.action === "allow" ? "open-confirmed-download" : "deny-confirmed-download",
+    downloadId: currentConfirmation.downloadId,
+    url: currentConfirmation.url,
+  });
 
   currentConfirmation = null;
   promptHost.style.display = "none";
   showNextConfirmation();
 }
 
-function requestConfirmation(url, filename, referrer, byExtensionId) {
-  confirmationQueue.push({ url, filename, referrer, byExtensionId });
+function requestConfirmation(downloadId, url, filename, referrer, byExtensionId) {
+  const pending = currentConfirmation
+    ? [currentConfirmation, ...confirmationQueue]
+    : confirmationQueue;
+  const isDuplicate = pending.some((existing) => existing.url === url);
+  if (isDuplicate || pending.length >= MAX_PENDING_CONFIRMATIONS) {
+    // The background script cancels ignored downloads.
+    ignoredConfirmationCount += 1;
+    console.info("[Resource Origins] download confirmation ignored", {
+      reason: isDuplicate ? "duplicate" : "queue-full",
+      url,
+      ignored: ignoredConfirmationCount,
+    });
+    return "ignored";
+  }
+
+  confirmationQueue.push({ downloadId, url, filename, referrer, byExtensionId });
   if (currentConfirmation) {
     updatePendingCount();
   } else {
@@ -115,13 +133,13 @@ function requestConfirmation(url, filename, referrer, byExtensionId) {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.action !== "show-download-confirmation") return;
 
-  sendResponse({
-    shown: requestConfirmation(
-      message.url,
-      message.filename,
-      message.referrer,
-      message.byExtensionId
-    ),
-  });
+  const result = requestConfirmation(
+    message.downloadId,
+    message.url,
+    message.filename,
+    message.referrer,
+    message.byExtensionId
+  );
+  sendResponse({ shown: result === true, ignored: result === "ignored" });
 });
 })();

@@ -14,6 +14,9 @@ const LARGE_INTERACTIVE_DIV_SETTING_EVENT =
   "resource-origins:large-interactive-div-setting";
 const PROMPT_SOURCE = "resource-origins-tab-prompt";
 const confirmationQueue = [];
+// Upper bound on pending confirmations (displayed + queued) to resist request floods.
+const MAX_PENDING_CONFIRMATIONS = 20;
+let ignoredConfirmationCount = 0;
 let currentConfirmation = null;
 let trustedClickSource = null;
 let trustedClickSourceOptions = null;
@@ -659,6 +662,23 @@ function requestConfirmation(url, active = true, options = {}) {
         sourceFrameId: options.sourceFrameId ?? 0,
       });
     }
+    return true;
+  }
+
+  const pending = currentConfirmation
+    ? [currentConfirmation, ...confirmationQueue]
+    : confirmationQueue;
+  const isDuplicate = pending.some(
+    (existing) => existing.url === normalizedUrl && existing.mode === mode
+  );
+  if (isDuplicate || pending.length >= MAX_PENDING_CONFIRMATIONS) {
+    // Report as handled so the caller drops the request instead of opening it.
+    ignoredConfirmationCount += 1;
+    console.info("[Resource Origins] confirmation ignored", {
+      reason: isDuplicate ? "duplicate" : "queue-full",
+      url: normalizedUrl,
+      ignored: ignoredConfirmationCount,
+    });
     return true;
   }
 

@@ -133,7 +133,12 @@
       li { min-width:0; margin-bottom:8px; padding:10px 12px; background:linear-gradient(135deg,rgba(48,87,112,.52),rgba(26,50,69,.78) 52%,rgba(75,96,91,.34)); border:1px solid rgba(151,190,207,.19); border-radius:8px; }
       .resource { display:block; overflow-wrap:anywhere; color:#f3f5f7; font:12px/1.4 ui-monospace,monospace; }
       .filter { display:block; margin-top:4px; overflow-wrap:anywhere; color:#ffcf87; font-size:11px; }
-      .block-domain-button { width:auto; height:26px; margin-top:8px; padding:3px 9px; color:#ffcf87; background:linear-gradient(135deg,rgba(240,189,104,.19),rgba(98,168,255,.08)); border-color:rgba(240,189,104,.35); font:600 11px/1.3 "Segoe UI Variable",Aptos,sans-serif; }
+      .scope { display:inline-block; margin-top:6px; padding:2px 6px; border-radius:3px; font-size:10px; font-weight:700; }
+      .scope-domain { color:#ffaaa5; background:rgba(217,48,37,.22); }
+      .scope-files { color:#8de0ac; background:rgba(25,60,48,.85); }
+      .scope-pattern { color:#9cc8ff; background:rgba(98,168,255,.18); }
+      .scope-options { display:block; margin-top:2px; font-weight:400; opacity:.85; overflow-wrap:anywhere; }
+      .block-domain-button { display:block; width:auto; height:26px; margin-top:8px; padding:3px 9px; color:#ffcf87; background:linear-gradient(135deg,rgba(240,189,104,.19),rgba(98,168,255,.08)); border-color:rgba(240,189,104,.35); font:600 11px/1.3 "Segoe UI Variable",Aptos,sans-serif; }
       .block-domain-button:hover { background:rgba(240,189,104,.3); border-color:#ffcf87; }
       button:disabled { cursor:default; opacity:.7; }
       .overflow { color:#b8c4ce; font-size:11px; }
@@ -169,6 +174,51 @@
     panel.append(header, riskList);
     shadow.append(style, panel);
     document.documentElement.append(panelHost);
+  }
+
+  function describeFilterScope(filterText) {
+    const body = filterText.startsWith("@@") ? filterText.slice(2) : filterText;
+    const isRegex = /^\/.+\/(\$|$)/.test(body);
+    const optionStart = isRegex ? body.lastIndexOf("/$") + 1 || -1 : body.lastIndexOf("$");
+    const pattern = optionStart > 0 ? body.slice(0, optionStart) : body;
+    const options = optionStart > 0 ? body.slice(optionStart + 1).split(",").filter(Boolean) : [];
+
+    const domainMatch = !isRegex && pattern.match(/^\|\|([a-z0-9.-]+)(.*)$/i);
+    let scope;
+    if (domainMatch) {
+      const rest = domainMatch[2].replace(/\*+$/, "");
+      const domain = domainMatch[1].replace(/\.$/, "");
+      scope = rest === "" || rest === "^" || rest === "^|" || rest === "/"
+        ? { kind: "domain", domain }
+        : { kind: "files", domain };
+    } else {
+      scope = { kind: "pattern" };
+    }
+    scope.options = options;
+    return scope;
+  }
+
+  function createScopeElement(filterText) {
+    const scope = describeFilterScope(filterText);
+    const element = document.createElement("span");
+    element.className = `scope scope-${scope.kind}`;
+    if (scope.kind === "domain") {
+      element.textContent = chrome.i18n.getMessage("riskScopeDomain");
+      element.title = chrome.i18n.getMessage("riskScopeDomainTitle", [scope.domain]);
+    } else if (scope.kind === "files") {
+      element.textContent = chrome.i18n.getMessage("riskScopeFiles", [scope.domain]);
+      element.title = chrome.i18n.getMessage("riskScopeFilesTitle");
+    } else {
+      element.textContent = chrome.i18n.getMessage("riskScopePattern");
+      element.title = chrome.i18n.getMessage("riskScopePatternTitle");
+    }
+    if (scope.options.length) {
+      const options = document.createElement("span");
+      options.className = "scope-options";
+      options.textContent = chrome.i18n.getMessage("riskScopeOptions", [scope.options.join(", ")]);
+      element.append(options);
+    }
+    return element;
   }
 
   function renderRisks() {
@@ -221,7 +271,7 @@
           blockButton.textContent = chrome.i18n.getMessage("riskRetry");
         }
       });
-      item.append(resource, filter, blockButton);
+      item.append(resource, filter, createScopeElement(risk.filter), blockButton);
       riskList.append(item);
     }
 
