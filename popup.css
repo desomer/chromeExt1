@@ -329,6 +329,11 @@ main {
   outline-offset: 2px;
 }
 
+.iframe-depth-setting select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 #content:not([hidden]) {
   display: flex;
   flex: 1;

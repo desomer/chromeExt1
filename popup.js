@@ -192,6 +192,7 @@ const confirmCrossDomain = document.querySelector("#confirm-cross-domain");
 const disableLargeInteractiveDivs = document.querySelector(
   "#disable-large-interactive-divs"
 );
+const domainMaxIframeDepth = document.querySelector("#domain-max-iframe-depth");
 let activeRootDomain = null;
 
 disableLargeInteractiveDivs.addEventListener("change", async () => {
@@ -208,6 +209,20 @@ disableLargeInteractiveDivs.addEventListener("change", async () => {
   await chrome.storage.local.set({ largeInteractiveDivRules });
 });
 
+domainMaxIframeDepth.addEventListener("change", async () => {
+  if (!activeRootDomain) return;
+
+  const { iframeDepthRules } = await chrome.storage.local.get({
+    iframeDepthRules: {},
+  });
+  if (domainMaxIframeDepth.value === "default") {
+    delete iframeDepthRules[activeRootDomain];
+  } else {
+    iframeDepthRules[activeRootDomain] = Number(domainMaxIframeDepth.value);
+  }
+  await chrome.storage.local.set({ iframeDepthRules });
+});
+
 async function loadDomainSettings() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   try {
@@ -221,17 +236,20 @@ async function loadDomainSettings() {
   confirmDownloads.disabled = !activeRootDomain;
   confirmCrossDomain.disabled = !activeRootDomain;
   disableLargeInteractiveDivs.disabled = !activeRootDomain;
+  domainMaxIframeDepth.disabled = !activeRootDomain;
 
   const {
     tabConfirmationRules,
     downloadConfirmationRules,
     crossDomainRules,
     largeInteractiveDivRules,
+    iframeDepthRules,
   } = await chrome.storage.local.get({
     tabConfirmationRules: {},
     downloadConfirmationRules: {},
     crossDomainRules: {},
     largeInteractiveDivRules: {},
+    iframeDepthRules: {},
   });
   confirmNewTabs.checked = Boolean(
     activeRootDomain && tabConfirmationRules[activeRootDomain] !== false
@@ -245,6 +263,12 @@ async function loadDomainSettings() {
   disableLargeInteractiveDivs.checked = Boolean(
     activeRootDomain && largeInteractiveDivRules[activeRootDomain] === true
   );
+  domainMaxIframeDepth.value =
+    activeRootDomain &&
+    Object.hasOwn(iframeDepthRules, activeRootDomain) &&
+    Number.isInteger(iframeDepthRules[activeRootDomain])
+      ? String(iframeDepthRules[activeRootDomain])
+      : "default";
   updateTimeoutAvailability();
 }
 

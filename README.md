@@ -55,6 +55,8 @@ Le réglage **Profondeur maximale des iframes** bloque les frames dont le niveau
 
 Le garde s'exécute au tout début de chaque frame et remplace une frame trop profonde par une page interne. Cette page propose **Supprimer l'iframe** pour retirer directement l'élément correspondant de sa frame parente. Les API publiques Manifest V3 ne permettent pas d'annuler une requête réseau en fonction de sa profondeur avant son démarrage ; quelques octets peuvent donc déjà avoir été transférés. Le changement s'applique immédiatement aux frames actives et aux prochains chargements.
 
+Dans la section **Paramètres pour ce domaine** du popup, il est également possible de surcharger la **Profondeur maximale des iframes** pour le domaine courant (`Par défaut` utilise la valeur globale, `Désactivé` ou `0` à `5` applique une limite spécifique à ce domaine).
+
 ## Confirmation des nouveaux onglets
 
 L'interrupteur **Confirmer les nouveaux onglets** affiche un panneau isolé en haut à droite de la page d'origine avant l'ouverture. Il couvre les liens avec `target="_blank"`, Ctrl/Cmd+clic, le clic avec la molette et les appels JavaScript à `window.open()` sur les pages web HTTP(S). Lorsqu'une ouverture par script est interceptée, `window.open()` renvoie `null` à la page et l'extension crée elle-même l'onglet après autorisation.

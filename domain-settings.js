@@ -3,6 +3,7 @@ const DOMAIN_SETTING_KEYS = [
   "downloadConfirmationRules",
   "crossDomainRules",
   "largeInteractiveDivRules",
+  "iframeDepthRules",
   "allowedTabDestinations",
 ];
 const BLOCK_RULE_PATTERN = /^\|\|(.+)\^$/;
@@ -37,6 +38,10 @@ const SETTINGS = [
     disabledLabel: "Désactivé",
   },
   {
+    key: "iframeDepthRules",
+    type: "iframeDepth",
+  },
+  {
     key: "allowedTabDestinations",
     defaultEnabled: false,
     enabledLabel: "Toujours autorisée",
@@ -56,8 +61,23 @@ const domainCount = document.querySelector("#domain-count");
 const domainSearch = document.querySelector("#domain-search");
 let configuredDomains = [];
 
+function formatIframeDepth(depth) {
+  return Number.isInteger(depth) && depth >= 0 ? String(depth) : "Désactivé";
+}
+
 function getSettingState(domain, setting, rules) {
   const domainRules = rules[setting.key] || {};
+  if (setting.type === "iframeDepth") {
+    const hasOverride =
+      Object.hasOwn(domainRules, domain) && Number.isInteger(domainRules[domain]);
+    const effectiveDepth = hasOverride ? domainRules[domain] : rules.maxIframeDepth;
+    return {
+      enabled: Number.isInteger(effectiveDepth) && effectiveDepth >= 0,
+      isDefault: !hasOverride,
+      label: formatIframeDepth(effectiveDepth),
+    };
+  }
+
   const hasOverride = Object.hasOwn(domainRules, domain);
   const enabled = hasOverride
     ? domainRules[domain] === true
@@ -210,7 +230,11 @@ async function loadDomainSettings() {
       DOMAIN_SETTING_KEYS.map((key) => [key, {}])
     );
     const [rules, dynamicRules] = await Promise.all([
-      chrome.storage.local.get({ ...defaults, blockedOriginTimestamps: {} }),
+      chrome.storage.local.get({
+        ...defaults,
+        blockedOriginTimestamps: {},
+        maxIframeDepth: -1,
+      }),
       chrome.declarativeNetRequest.getDynamicRules(),
     ]);
     const blockedDomains = dynamicRules.flatMap((rule) => {
@@ -237,7 +261,9 @@ domainSearch.addEventListener("input", () => loadDomainSettings());
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (
     areaName === "local" &&
-    (DOMAIN_SETTING_KEYS.some((key) => changes[key]) || changes.blockedOriginTimestamps)
+    (DOMAIN_SETTING_KEYS.some((key) => changes[key]) ||
+      changes.blockedOriginTimestamps ||
+      changes.maxIframeDepth)
   ) {
     loadDomainSettings();
   }

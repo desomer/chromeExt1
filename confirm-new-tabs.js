@@ -5,6 +5,8 @@ let tabConfirmationRules = {};
 let crossDomainRules = {};
 let allowedTabDestinations = {};
 let largeInteractiveDivRules = {};
+let maxIframeDepth = -1;
+let iframeDepthRules = {};
 let elementMinimumArea = 100000;
 let crossDomainConfirmationEnabled = false;
 const SETTINGS_EVENT = "resource-origins:confirm-new-tabs-setting";
@@ -227,6 +229,22 @@ function enforceIframeDepth(maxDepth) {
   location.replace(blockedPage.href);
 }
 
+function getEffectiveMaxIframeDepth() {
+  const topRootDomain = getTopFrameRootDomain();
+  if (
+    topRootDomain &&
+    Object.hasOwn(iframeDepthRules, topRootDomain) &&
+    Number.isInteger(iframeDepthRules[topRootDomain])
+  ) {
+    return iframeDepthRules[topRootDomain];
+  }
+  return maxIframeDepth;
+}
+
+function updateIframeDepth() {
+  enforceIframeDepth(getEffectiveMaxIframeDepth());
+}
+
 function setConfirmationEnabled(enabled) {
   confirmationEnabled = enabled;
   window.dispatchEvent(new CustomEvent(SETTINGS_EVENT, { detail: enabled }));
@@ -269,9 +287,13 @@ chrome.storage.local
     allowedTabDestinations = rules;
   });
 
-chrome.storage.local.get({ maxIframeDepth: -1 }).then(({ maxIframeDepth }) => {
-  enforceIframeDepth(maxIframeDepth);
-});
+chrome.storage.local
+  .get({ maxIframeDepth: -1, iframeDepthRules: {} })
+  .then((settings) => {
+    maxIframeDepth = settings.maxIframeDepth;
+    iframeDepthRules = settings.iframeDepthRules || {};
+    updateIframeDepth();
+  });
 
 chrome.storage.local
   .get({ elementMinimumArea: 100000, largeInteractiveDivRules: {} })
@@ -293,7 +315,12 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     updateTabConfirmationSetting();
   }
   if (areaName === "local" && changes.maxIframeDepth) {
-    enforceIframeDepth(changes.maxIframeDepth.newValue);
+    maxIframeDepth = changes.maxIframeDepth.newValue ?? -1;
+    updateIframeDepth();
+  }
+  if (areaName === "local" && changes.iframeDepthRules) {
+    iframeDepthRules = changes.iframeDepthRules.newValue || {};
+    updateIframeDepth();
   }
   if (areaName === "local" && changes.elementMinimumArea) {
     elementMinimumArea = changes.elementMinimumArea.newValue;
