@@ -73,6 +73,9 @@ function inspectPointerElements(minimumArea = 100000, minimumZIndex = 1000) {
   const matchedElements = [];
   for (const element of candidates) {
     //if (element instanceof Element && element.tagName === "VIDEO") continue;
+    if (element instanceof Element && element.hasAttribute("data-resource-origins-dialog")) {
+      continue;
+    }
 
     const registeredTypes = registry?.listenersByTarget.get(element);
     const widthRemoved = autoDisabledElements?.get(element);

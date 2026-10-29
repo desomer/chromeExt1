@@ -94,6 +94,54 @@ main {
   outline-offset: 1px;
 }
 
+.domain-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.domain-filter {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--surface);
+  border: 1px solid #354861;
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.domain-filter:hover {
+  color: var(--ink);
+  border-color: var(--green);
+}
+
+.domain-filter.is-active {
+  color: var(--ink);
+  background: linear-gradient(135deg, rgba(98, 168, 255, 0.34), rgba(114, 213, 238, 0.17));
+  border-color: var(--green);
+}
+
+.domain-filter:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.filter-count {
+  min-width: 16px;
+  padding: 1px 5px;
+  font-size: 10px;
+  text-align: center;
+  background: rgba(5, 13, 23, 0.55);
+  border-radius: 8px;
+}
+
 .domain-status {
   margin: 16px 0 8px;
   color: var(--muted);
@@ -105,7 +153,8 @@ main {
 }
 
 .table-scroll {
-  overflow-x: auto;
+  max-height: calc(100vh - 230px);
+  overflow: auto;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -113,7 +162,8 @@ main {
 
 table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   text-align: left;
 }
 
@@ -124,9 +174,14 @@ td {
 }
 
 th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
+  line-height: 1.3;
+  vertical-align: bottom;
   white-space: nowrap;
   background: #17243a;
 }
@@ -159,10 +214,36 @@ tbody tr:hover {
 .setting-state {
   display: inline-block;
   padding: 4px 7px;
+  border: 1px solid transparent;
   border-radius: 3px;
+  font-family: inherit;
   font-size: 10px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.setting-select {
+  cursor: pointer;
+}
+
+.setting-select:hover:not(:disabled) {
+  border-color: rgba(230, 237, 248, 0.35);
+}
+
+.setting-select:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+}
+
+.setting-select:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.setting-select option {
+  color: var(--ink);
+  background: var(--surface);
+  font-weight: 600;
 }
 
 .setting-state.is-enabled {

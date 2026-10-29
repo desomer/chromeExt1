@@ -163,16 +163,28 @@ domainSettingsAction.addEventListener("click", () => {
   chrome.runtime.openOptionsPage();
 });
 
+async function saveDomainSettingRule(storageKey, domain, updateFn) {
+  const { [storageKey]: rules = {}, domainUpdatedTimestamps = {} } =
+    await chrome.storage.local.get({
+      [storageKey]: {},
+      domainUpdatedTimestamps: {},
+    });
+  updateFn(rules);
+  domainUpdatedTimestamps[domain] = Date.now();
+  await chrome.storage.local.set({
+    [storageKey]: rules,
+    domainUpdatedTimestamps,
+  });
+}
+
 const confirmNewTabs = document.querySelector("#confirm-new-tabs");
 confirmNewTabs.addEventListener("change", async () => {
   if (!activeRootDomain) return;
 
-  const { tabConfirmationRules } = await chrome.storage.local.get({
-    tabConfirmationRules: {},
+  await saveDomainSettingRule("tabConfirmationRules", activeRootDomain, (rules) => {
+    if (confirmNewTabs.checked) delete rules[activeRootDomain];
+    else rules[activeRootDomain] = false;
   });
-  if (confirmNewTabs.checked) delete tabConfirmationRules[activeRootDomain];
-  else tabConfirmationRules[activeRootDomain] = false;
-  chrome.storage.local.set({ tabConfirmationRules });
   updateTimeoutAvailability();
 });
 
@@ -180,12 +192,14 @@ const confirmDownloads = document.querySelector("#confirm-downloads");
 confirmDownloads.addEventListener("change", async () => {
   if (!activeRootDomain) return;
 
-  const { downloadConfirmationRules } = await chrome.storage.local.get({
-    downloadConfirmationRules: {},
-  });
-  if (confirmDownloads.checked) delete downloadConfirmationRules[activeRootDomain];
-  else downloadConfirmationRules[activeRootDomain] = false;
-  chrome.storage.local.set({ downloadConfirmationRules });
+  await saveDomainSettingRule(
+    "downloadConfirmationRules",
+    activeRootDomain,
+    (rules) => {
+      if (confirmDownloads.checked) delete rules[activeRootDomain];
+      else rules[activeRootDomain] = false;
+    }
+  );
 });
 
 const confirmCrossDomain = document.querySelector("#confirm-cross-domain");
@@ -198,29 +212,29 @@ let activeRootDomain = null;
 disableLargeInteractiveDivs.addEventListener("change", async () => {
   if (!activeRootDomain) return;
 
-  const { largeInteractiveDivRules } = await chrome.storage.local.get({
-    largeInteractiveDivRules: {},
-  });
-  if (disableLargeInteractiveDivs.checked) {
-    largeInteractiveDivRules[activeRootDomain] = true;
-  } else {
-    delete largeInteractiveDivRules[activeRootDomain];
-  }
-  await chrome.storage.local.set({ largeInteractiveDivRules });
+  await saveDomainSettingRule(
+    "largeInteractiveDivRules",
+    activeRootDomain,
+    (rules) => {
+      if (disableLargeInteractiveDivs.checked) {
+        rules[activeRootDomain] = true;
+      } else {
+        delete rules[activeRootDomain];
+      }
+    }
+  );
 });
 
 domainMaxIframeDepth.addEventListener("change", async () => {
   if (!activeRootDomain) return;
 
-  const { iframeDepthRules } = await chrome.storage.local.get({
-    iframeDepthRules: {},
+  await saveDomainSettingRule("iframeDepthRules", activeRootDomain, (rules) => {
+    if (domainMaxIframeDepth.value === "default") {
+      delete rules[activeRootDomain];
+    } else {
+      rules[activeRootDomain] = Number(domainMaxIframeDepth.value);
+    }
   });
-  if (domainMaxIframeDepth.value === "default") {
-    delete iframeDepthRules[activeRootDomain];
-  } else {
-    iframeDepthRules[activeRootDomain] = Number(domainMaxIframeDepth.value);
-  }
-  await chrome.storage.local.set({ iframeDepthRules });
 });
 
 async function loadDomainSettings() {
@@ -275,10 +289,10 @@ async function loadDomainSettings() {
 confirmCrossDomain.addEventListener("change", async () => {
   if (!activeRootDomain) return;
 
-  const { crossDomainRules } = await chrome.storage.local.get({ crossDomainRules: {} });
-  if (confirmCrossDomain.checked) delete crossDomainRules[activeRootDomain];
-  else crossDomainRules[activeRootDomain] = false;
-  chrome.storage.local.set({ crossDomainRules });
+  await saveDomainSettingRule("crossDomainRules", activeRootDomain, (rules) => {
+    if (confirmCrossDomain.checked) delete rules[activeRootDomain];
+    else rules[activeRootDomain] = false;
+  });
 });
 
 loadDomainSettings();

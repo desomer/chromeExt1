@@ -105,20 +105,48 @@
     }
   });
 
+  function updateDialogStackLayout() {
+    let currentTop = 16;
+    const dialogs = [...document.querySelectorAll("[data-resource-origins-dialog]")]
+      .filter((element) => element.style.display !== "none")
+      .sort((a, b) => {
+        const aIsRisks = a.dataset.resourceOriginsDialog === "risks";
+        const bIsRisks = b.dataset.resourceOriginsDialog === "risks";
+        if (aIsRisks !== bIsRisks) return aIsRisks ? 1 : -1;
+        return (
+          (Number(a.dataset.resourceOriginsOpenedAt) || 0) -
+          (Number(b.dataset.resourceOriginsOpenedAt) || 0)
+        );
+      });
+    for (const dialog of dialogs) {
+      dialog.style.setProperty("top", `${currentTop}px`, "important");
+      if (dialog.dataset.resourceOriginsDialog === "risks") {
+        const availableHeight = Math.max(140, window.innerHeight - currentTop - 16);
+        dialog.style.setProperty("--ro-risk-max-height", `${availableHeight}px`);
+      }
+      const height = dialog.getBoundingClientRect().height;
+      if (height > 0) {
+        currentTop += Math.ceil(height) + 12;
+      }
+    }
+  }
+
   function ensurePanel() {
     if (panelHost?.isConnected) return;
     if (!document.documentElement) return;
 
     panelHost = document.createElement("div");
     panelHost.dataset.resourceOriginsEasyListAlert = "true";
+    panelHost.dataset.resourceOriginsDialog = "risks";
+    panelHost.setAttribute("popover", "manual");
     panelHost.style.cssText =
-      "position:fixed!important;top:16px!important;right:16px!important;z-index:2147483647!important;display:none!important;width:max-content!important;max-width:calc(100vw - 32px)!important;color-scheme:dark!important;";
+      "position:fixed!important;top:16px!important;right:16px!important;bottom:auto!important;left:auto!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;overflow:visible!important;z-index:2147483647!important;display:none!important;width:max-content!important;max-width:calc(100vw - 32px)!important;color-scheme:dark!important;";
 
     const shadow = panelHost.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
     style.textContent = `
-      :host { all: initial; }
-      .panel { box-sizing:border-box; display:flex; flex-direction:column; width:min(440px,calc(100vw - 32px)); max-height:70vh; overflow:hidden; color:#e6edf8; background:linear-gradient(135deg,#203b4d,#111c2e 65%,#263d40); border:1px solid rgba(151,190,207,.35); border-top:3px solid #ffbf69; border-radius:8px; box-shadow:0 18px 40px rgba(0,0,0,.45); font:13px/1.45 "Segoe UI Variable",Aptos,sans-serif; }
+      :host { all: initial; position: fixed; top: 16px; right: 16px; bottom: auto; left: auto; margin: 0; padding: 0; border: 0; background: transparent; overflow: visible; z-index: 2147483647; width: max-content; max-width: calc(100vw - 32px); color-scheme: dark; }
+      .panel { box-sizing:border-box; display:flex; flex-direction:column; width:min(440px,calc(100vw - 32px)); max-height:min(70vh,var(--ro-risk-max-height,calc(100vh - 32px))); overflow:hidden; color:#e6edf8; background:linear-gradient(135deg,#203b4d,#111c2e 65%,#263d40); border:1px solid rgba(151,190,207,.35); border-top:3px solid #ffbf69; border-radius:8px; box-shadow:0 18px 40px rgba(0,0,0,.45); font:13px/1.45 "Segoe UI Variable",Aptos,sans-serif; }
       header { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:12px 14px; border-bottom:1px solid rgba(151,190,207,.19); }
       h2 { flex:1 1 140px; margin:0; font-size:14px; font-weight:700; }
       .count { flex:none; color:#ffcf87; font-size:11px; }
@@ -160,7 +188,14 @@
     closeButton.title = chrome.i18n.getMessage("riskCloseTitle");
     closeButton.setAttribute("aria-label", chrome.i18n.getMessage("riskCloseLabel"));
     closeButton.addEventListener("click", () => {
+      delete panelHost.dataset.resourceOriginsOpenedAt;
+      try {
+        panelHost.hidePopover?.();
+      } catch {
+        // Ignore if popover is not currently open.
+      }
       panelHost.style.setProperty("display", "none", "important");
+      updateDialogStackLayout();
     });
     const refreshButton = document.createElement("button");
     refreshButton.className = "refresh-page-button";
@@ -174,6 +209,10 @@
     panel.append(header, riskList);
     shadow.append(style, panel);
     document.documentElement.append(panelHost);
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(() => updateDialogStackLayout()).observe(panelHost);
+    }
+    window.addEventListener("resize", updateDialogStackLayout);
   }
 
   function describeFilterScope(filterText) {
@@ -283,7 +322,16 @@
       ]);
       riskList.append(overflow);
     }
+    if (!panelHost.dataset.resourceOriginsOpenedAt) {
+      panelHost.dataset.resourceOriginsOpenedAt = String(Date.now());
+    }
     panelHost.style.setProperty("display", "block", "important");
+    try {
+      panelHost.showPopover?.();
+    } catch {
+      // Ignore if already open in top layer.
+    }
+    updateDialogStackLayout();
     console.info(`${LOG_PREFIX} risk panel displayed`, {
       total: totalRiskCount,
       visible: displayed.length,

@@ -21,6 +21,39 @@
         <input id="domain-search" type="search" placeholder="Ex. example.com" />
       </label>
 
+      <div class="domain-filters" role="group" aria-label="Filtres des réglages par domaine">
+        <button type="button" class="domain-filter is-active" data-domain-filter="all" aria-pressed="true">
+          Tous <span class="filter-count">0</span>
+        </button>
+        <button type="button" class="domain-filter" data-domain-filter="last-updated" aria-pressed="false" title="Trier les domaines du plus récemment modifié au plus ancien">
+          Dernière mise à jour <span class="filter-count">0</span>
+        </button>
+        <button type="button" class="domain-filter" data-domain-filter="recent-24h" aria-pressed="false" title="Domaines modifiés ou bloqués depuis moins de 24 h">
+          Mis à jour &lt; 24 h <span class="filter-count">0</span>
+        </button>
+        <button type="button" class="domain-filter" data-domain-filter="tabConfirmationRules" aria-pressed="false">
+          Bloqué nouveaux onglets <span class="filter-count">0</span>
+        </button>
+        <button type="button" class="domain-filter" data-domain-filter="downloadConfirmationRules" aria-pressed="false">
+          Bloqué téléchargements <span class="filter-count">0</span>
+        </button>
+        <button type="button" class="domain-filter" data-domain-filter="crossDomainRules" aria-pressed="false">
+          Bloqué liens externes <span class="filter-count">0</span>
+        </button>
+        <button type="button" class="domain-filter" data-domain-filter="largeInteractiveDivRules" aria-pressed="false">
+          Bloqué grandes divs <span class="filter-count">0</span>
+        </button>
+        <button type="button" class="domain-filter" data-domain-filter="iframeDepthRules" aria-pressed="false">
+          Profondeur iframes <span class="filter-count">0</span>
+        </button>
+        <button type="button" class="domain-filter" data-domain-filter="allowedTabDestinations" aria-pressed="false">
+          Destination autorisée <span class="filter-count">0</span>
+        </button>
+        <button type="button" class="domain-filter" data-domain-filter="blockedOrigins" aria-pressed="false">
+          Ressources bloquées <span class="filter-count">0</span>
+        </button>
+      </div>
+
       <p id="domain-status" class="domain-status" aria-live="polite">
         Chargement des réglages…
       </p>
@@ -30,14 +63,14 @@
           <thead>
             <tr>
               <th scope="col">Domaine</th>
-              <th scope="col">Nouveaux onglets</th>
-              <th scope="col">Téléchargements</th>
-              <th scope="col">Liens externes</th>
-              <th scope="col">Grandes divs</th>
+              <th scope="col">Bloqué<br />nouveaux onglets</th>
+              <th scope="col">Bloqué<br />téléchargements</th>
+              <th scope="col">Bloqué<br />liens externes</th>
+              <th scope="col">Bloqué<br />grandes divs</th>
               <th scope="col">Profondeur iframes</th>
               <th scope="col">Destination autorisée</th>
               <th scope="col">Ressources bloquées</th>
-              <th scope="col">Date du blocage</th>
+              <th scope="col">Dernière<br />mise à jour</th>
               <th scope="col">Actions</th>
             </tr>
           </thead>

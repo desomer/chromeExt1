@@ -116,10 +116,15 @@ window.addEventListener("message", (event) => {
       ? `Interception : ${interceptionModeLabel}`
       : "";
     interceptionMode.hidden = !interceptionModeLabel;
-    document.querySelector("#always-allow-to").disabled = ![
-      "http:",
-      "https:",
-    ].includes(url.protocol);
+    const alwaysAllowToButton = document.querySelector("#always-allow-to");
+    alwaysAllowToButton.disabled = !["http:", "https:"].includes(url.protocol);
+    alwaysAllowToButton.title = data.destinationDomain
+      ? `Always allow opening tabs to ${data.destinationDomain}`
+      : "Always allow opening tabs to this destination domain";
+    const alwaysAllowFromButton = document.querySelector("#always-allow-from");
+    alwaysAllowFromButton.title = data.sourceSiteDomain
+      ? `Disable tab opening confirmation on ${data.sourceSiteDomain} for all destinations`
+      : "Disable tab opening confirmation on the current site for all destinations";
     const sourceSelector = document.querySelector("#source-selector");
     sourceSelector.textContent = data.sourceSelector
       ? `${data.sourceSelector.startsWith("#") ? "Source ID" : "Source sélecteur"} : ${data.sourceSelector}`

@@ -354,6 +354,56 @@ function isConfirmableUrl(value) {
   }
 }
 
+function updateDialogStackLayout() {
+  let currentTop = 16;
+  const dialogs = [...document.querySelectorAll("[data-resource-origins-dialog]")]
+    .filter((element) => element.style.display !== "none")
+    .sort((a, b) => {
+      const aIsRisks = a.dataset.resourceOriginsDialog === "risks";
+      const bIsRisks = b.dataset.resourceOriginsDialog === "risks";
+      if (aIsRisks !== bIsRisks) return aIsRisks ? 1 : -1;
+      return (
+        (Number(a.dataset.resourceOriginsOpenedAt) || 0) -
+        (Number(b.dataset.resourceOriginsOpenedAt) || 0)
+      );
+    });
+  for (const dialog of dialogs) {
+    dialog.style.setProperty("top", `${currentTop}px`, "important");
+    if (dialog.dataset.resourceOriginsDialog === "risks") {
+      const availableHeight = Math.max(140, window.innerHeight - currentTop - 16);
+      dialog.style.setProperty("--ro-risk-max-height", `${availableHeight}px`);
+    }
+    const height = dialog.getBoundingClientRect().height;
+    if (height > 0) {
+      currentTop += Math.ceil(height) + 12;
+    }
+  }
+}
+
+function showPromptHost() {
+  if (!promptHost.dataset.resourceOriginsOpenedAt) {
+    promptHost.dataset.resourceOriginsOpenedAt = String(Date.now());
+  }
+  promptHost.style.setProperty("display", "block", "important");
+  try {
+    promptHost.showPopover?.();
+  } catch {
+    // Ignore if already open in top layer.
+  }
+  updateDialogStackLayout();
+}
+
+function hidePromptHost() {
+  delete promptHost.dataset.resourceOriginsOpenedAt;
+  try {
+    promptHost.hidePopover?.();
+  } catch {
+    // Ignore if popover is not currently open.
+  }
+  promptHost.style.setProperty("display", "none", "important");
+  updateDialogStackLayout();
+}
+
 async function ensurePrompt() {
   if (promptReady) return promptReady;
 
@@ -361,8 +411,10 @@ async function ensurePrompt() {
     const mountPrompt = () => {
       promptHost = document.createElement("div");
       promptHost.id = "DialogResOrigine";
+      promptHost.dataset.resourceOriginsDialog = "tab";
+      promptHost.setAttribute("popover", "manual");
       promptHost.style.cssText =
-        "position:fixed;top:16px;right:16px;z-index:2147483647;display:none;width:420px;height:480px;color-scheme: light;";
+        "position:fixed!important;top:16px!important;right:16px!important;bottom:auto!important;left:auto!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;overflow:visible!important;z-index:2147483647!important;display:none!important;width:420px!important;height:480px!important;color-scheme:light!important;";
 
       const shadowRoot = promptHost.attachShadow({ mode: "closed" });
       const frame = document.createElement("iframe");
@@ -471,14 +523,23 @@ async function showNextConfirmation() {
     sourceCheck = await verifyConfirmationSource(confirmation);
     if (currentConfirmation !== confirmation) return;
   }
-  promptHost.style.display = "block";
+  showPromptHost();
   highlightConfirmationSource(
     currentConfirmation.sourceFrameId,
     currentConfirmation.sourceSelector
   );
+  let destinationDomain = "";
+  try {
+    const destination = new URL(currentConfirmation.url);
+    if (["http:", "https:"].includes(destination.protocol)) {
+      destinationDomain = getRootDomain(destination.hostname);
+    }
+  } catch {}
   promptPort.postMessage({
     action: "show",
     url: currentConfirmation.url,
+    sourceSiteDomain: getRootDomain(location.hostname),
+    destinationDomain,
     interceptionMode: currentConfirmation.interceptionMode,
     pendingCount: confirmationQueue.length + 1,
     expiresAt: currentConfirmation.expiresAt,
@@ -548,10 +609,18 @@ function updatePendingCount() {
 }
 
 async function updateDomainRule(storageKey, domain, value) {
-  const stored = await chrome.storage.local.get({ [storageKey]: {} });
+  const stored = await chrome.storage.local.get({
+    [storageKey]: {},
+    domainUpdatedTimestamps: {},
+  });
   const rules = stored[storageKey] || {};
+  const domainUpdatedTimestamps = stored.domainUpdatedTimestamps || {};
   rules[domain] = value;
-  await chrome.storage.local.set({ [storageKey]: rules });
+  domainUpdatedTimestamps[domain] = Date.now();
+  await chrome.storage.local.set({
+    [storageKey]: rules,
+    domainUpdatedTimestamps,
+  });
   if (storageKey === "allowedTabDestinations") {
     allowedTabDestinations = rules;
   } else if (storageKey === "tabConfirmationRules") {
@@ -648,7 +717,7 @@ async function handlePromptResponse(event) {
   }
 
   currentConfirmation = null;
-  promptHost.style.display = "none";
+  hidePromptHost();
   handlingPromptResponse = false;
   showNextConfirmation();
 }
