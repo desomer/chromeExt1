@@ -1120,6 +1120,7 @@ const CENSORED_SITE_BLOCKED_TYPES = [
 ];
 const CENSORED_SITE_WARNING_PATH = "/site-blocked.html";
 let censoredSiteUpdateQueue = Promise.resolve();
+let censorshipExceptionUpdateQueue = Promise.resolve();
 
 function normalizeCensoredHostname(value) {
   const input = String(value ?? "").trim();
@@ -1314,9 +1315,47 @@ function queueCensoredSiteUpdate(hostname, shouldBlock) {
   return operation;
 }
 
+async function setCensorshipException(hostname, excluded) {
+  const rootDomain = normalizeCensoredHostname(hostname);
+  const { censorshipExcludedSites: savedExcludedSites = [] } =
+    await chrome.storage.local.get({ censorshipExcludedSites: [] });
+  const excludedSites = new Set(
+    (Array.isArray(savedExcludedSites) ? savedExcludedSites : [])
+      .filter((site) => typeof site === "string")
+      .map((site) => {
+        try {
+          return normalizeCensoredHostname(site);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+  );
+  if (excluded) excludedSites.add(rootDomain);
+  else excludedSites.delete(rootDomain);
+  await chrome.storage.local.set({
+    censorshipExcludedSites: [...excludedSites].sort(),
+  });
+  return { hostname: rootDomain, excluded };
+}
+
+function queueCensorshipExceptionUpdate(hostname, excluded) {
+  const operation = censorshipExceptionUpdateQueue.then(() =>
+    setCensorshipException(hostname, excluded)
+  );
+  censorshipExceptionUpdateQueue = operation.catch(() => {});
+  return operation;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (
-    ["set-censored-site", "get-censored-sites", "reload-censored-tab"].includes(message.action) &&
+    [
+      "set-censored-site",
+      "get-censored-sites",
+      "reload-censored-tab",
+      "get-censorship-exclusions",
+      "set-censorship-exclusion",
+    ].includes(message.action) &&
     !isCensorshipRequestAllowed(sender)
   ) {
     sendResponse({ ok: false, reason: "unauthorized censorship request" });
@@ -1339,6 +1378,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(({ censoredSites }) => sendResponse({ ok: true, censoredSites }))
       .catch((error) => {
         console.error("[Resource Origins] could not load censored sites", error);
+        sendResponse({ ok: false, reason: error?.message ?? String(error) });
+      });
+    return true;
+  }
+
+  if (message.action === "get-censorship-exclusions") {
+    chrome.storage.local
+      .get({ censorshipExcludedSites: [] })
+      .then(({ censorshipExcludedSites }) =>
+        sendResponse({ ok: true, censorshipExcludedSites })
+      )
+      .catch((error) => {
+        console.error("[Resource Origins] could not load censorship exceptions", error);
+        sendResponse({ ok: false, reason: error?.message ?? String(error) });
+      });
+    return true;
+  }
+
+  if (message.action === "set-censorship-exclusion") {
+    queueCensorshipExceptionUpdate(
+      message.hostname,
+      message.excluded === true
+    )
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => {
+        console.error("[Resource Origins] could not update censorship exceptions", error);
         sendResponse({ ok: false, reason: error?.message ?? String(error) });
       });
     return true;

@@ -3,6 +3,15 @@ const censorshipCurrentSite = document.querySelector("#censorship-current-site")
 const censorCurrentSiteButton = document.querySelector("#censor-current-site");
 const reloadCensorshipPageButton = document.querySelector("#reload-censorship-page");
 const censoredSitesList = document.querySelector("#censored-sites-list");
+const censorshipExclusionCurrentSite = document.querySelector(
+  "#censorship-exclusion-current-site"
+);
+const neverCensorCurrentSiteButton = document.querySelector(
+  "#never-censor-current-site"
+);
+const censorshipExclusionsList = document.querySelector(
+  "#censorship-exclusions-list"
+);
 const censorshipKeywordsInput = document.querySelector("#censorship-keywords");
 const remoteKeywordsEnabled = document.querySelector("#remote-keywords-enabled");
 const remoteKeywordsUrl = document.querySelector("#remote-keywords-url");
@@ -59,6 +68,46 @@ function renderCensoredSites(sites) {
   updateCurrentSiteControl(normalizedSites);
 }
 
+function renderCensorshipExclusions(sites) {
+  censorshipExclusionsList.replaceChildren();
+  const normalizedSites = [...new Set(
+    (Array.isArray(sites) ? sites : [])
+      .filter((site) => typeof site === "string")
+      .map((site) => site.toLowerCase())
+  )].sort();
+  for (const site of normalizedSites) {
+    const item = document.createElement("li");
+    item.className = "censorship-list-item";
+    const name = document.createElement("span");
+    name.textContent = site;
+    const removeButton = document.createElement("button");
+    removeButton.className = "refresh-button";
+    removeButton.type = "button";
+    removeButton.textContent = "Réactiver";
+    removeButton.setAttribute("aria-label", `Réactiver la censure par mots-clés sur ${site}`);
+    removeButton.addEventListener("click", () => updateCensorshipExclusion(site, false));
+    item.append(name, removeButton);
+    censorshipExclusionsList.append(item);
+  }
+  updateCensorshipExclusionControl(normalizedSites);
+}
+
+function updateCensorshipExclusionControl(sites) {
+  if (!currentCensorshipHostname || !currentCensorshipRootDomain) {
+    censorshipExclusionCurrentSite.textContent =
+      "Site courant : non disponible sur cette page.";
+    neverCensorCurrentSiteButton.disabled = true;
+    return;
+  }
+  censorshipExclusionCurrentSite.textContent =
+    `Site courant : ${currentCensorshipHostname} · domaine racine : ${currentCensorshipRootDomain}`;
+  const excluded = sites.includes(currentCensorshipRootDomain);
+  neverCensorCurrentSiteButton.disabled = excluded;
+  neverCensorCurrentSiteButton.textContent = excluded
+    ? "Ce site est déjà exclu de la censure par mots-clés"
+    : "Ne jamais censurer ce site";
+}
+
 function updateCurrentSiteControl(sites) {
   if (!currentCensorshipHostname || !currentCensorshipRootDomain) {
     censorshipCurrentSite.textContent = "Site courant : non disponible sur cette page.";
@@ -75,11 +124,18 @@ function updateCurrentSiteControl(sites) {
 }
 
 async function loadCensoredSites() {
-  const response = await chrome.runtime.sendMessage({ action: "get-censored-sites" });
-  if (!response?.ok) {
-    throw new Error(response?.reason || "Impossible de charger les domaines censurés.");
+  const [blockedResponse, exclusionsResponse] = await Promise.all([
+    chrome.runtime.sendMessage({ action: "get-censored-sites" }),
+    chrome.runtime.sendMessage({ action: "get-censorship-exclusions" }),
+  ]);
+  if (!blockedResponse?.ok) {
+    throw new Error(blockedResponse?.reason || "Impossible de charger les domaines censurés.");
   }
-  renderCensoredSites(response.censoredSites);
+  if (!exclusionsResponse?.ok) {
+    throw new Error(exclusionsResponse?.reason || "Impossible de charger les exceptions de censure.");
+  }
+  renderCensoredSites(blockedResponse.censoredSites);
+  renderCensorshipExclusions(exclusionsResponse.censorshipExcludedSites);
 }
 
 async function updateCensoredSite(hostname, blocked) {
@@ -116,6 +172,43 @@ async function updateCensoredSite(hostname, blocked) {
     setCensorshipStatus(`Impossible de modifier la censure : ${error.message}`, true);
     censorCurrentSiteButton.disabled = !currentCensorshipHostname;
     for (const button of censoredSitesList.querySelectorAll("button")) {
+      button.disabled = false;
+    }
+  }
+}
+
+async function updateCensorshipExclusion(hostname, excluded) {
+  const rootDomain = getCensorshipRootDomain(hostname);
+  if (excluded && !window.confirm(
+    isFrenchCensorshipUi
+      ? `Exclure ${rootDomain} et ses sous-domaines de la censure par mots-clés ?`
+      : `Exclude ${rootDomain} and its subdomains from keyword censorship?`
+  )) {
+    return;
+  }
+  neverCensorCurrentSiteButton.disabled = true;
+  for (const button of censorshipExclusionsList.querySelectorAll("button")) {
+    button.disabled = true;
+  }
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: "set-censorship-exclusion",
+      hostname,
+      excluded,
+    });
+    if (!response?.ok) {
+      throw new Error(response?.reason || "La liste des exceptions n’a pas été modifiée.");
+    }
+    await loadCensoredSites();
+    setCensorshipStatus(
+      excluded
+        ? `${rootDomain} et ses sous-domaines ne seront plus censurés par les mots-clés.`
+        : `La censure par mots-clés est réactivée sur ${rootDomain} et ses sous-domaines.`
+    );
+  } catch (error) {
+    setCensorshipStatus(`Impossible de modifier l’exception : ${error.message}`, true);
+    neverCensorCurrentSiteButton.disabled = !currentCensorshipHostname;
+    for (const button of censorshipExclusionsList.querySelectorAll("button")) {
       button.disabled = false;
     }
   }
@@ -289,6 +382,12 @@ async function loadCensorshipConfiguration() {
 censorCurrentSiteButton.addEventListener("click", () => {
   if (currentCensorshipRootDomain) {
     updateCensoredSite(currentCensorshipRootDomain, true);
+  }
+});
+
+neverCensorCurrentSiteButton.addEventListener("click", () => {
+  if (currentCensorshipRootDomain) {
+    updateCensorshipExclusion(currentCensorshipRootDomain, true);
   }
 });
 
