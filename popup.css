@@ -166,7 +166,7 @@ h1 {
 .tabs {
   display: grid;
   flex: none;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   padding: 0 20px;
   background: linear-gradient(135deg, rgba(29, 55, 70, 0.88), rgba(19, 34, 49, 0.9));
   border-bottom: 1px solid var(--line);
@@ -207,7 +207,8 @@ main {
 
 #resources-panel:not([hidden]),
 #elements-panel:not([hidden]),
-#modified-panel:not([hidden]) {
+#modified-panel:not([hidden]),
+#censorship-panel:not([hidden]) {
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -219,6 +220,101 @@ main {
   min-height: 0;
   overflow-y: auto;
   padding-right: 5px;
+}
+
+.censorship-panel {
+  overflow-y: auto;
+  padding-right: 5px;
+}
+
+.censorship-panel h2 {
+  margin: 0 0 8px;
+  font-size: 19px;
+}
+
+.censorship-section {
+  margin-top: 10px;
+  padding: 10px;
+  background: var(--panel-fill);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+}
+
+.censorship-section h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.censorship-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.censorship-field textarea,
+.censorship-field input {
+  width: 100%;
+  padding: 7px 8px;
+  color: var(--ink);
+  font: inherit;
+  background: var(--surface);
+  border: 1px solid #354861;
+  border-radius: 5px;
+}
+
+.censorship-field textarea {
+  resize: vertical;
+}
+
+.censorship-field textarea:focus,
+.censorship-field input:focus {
+  border-color: var(--green);
+  outline: 2px solid rgba(98, 168, 255, 0.18);
+}
+
+.censorship-actions,
+.censorship-list-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.censorship-actions {
+  flex-wrap: wrap;
+}
+
+.censorship-list {
+  display: grid;
+  gap: 5px;
+  max-height: 100px;
+  overflow-y: auto;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.censorship-list:empty {
+  display: none;
+}
+
+.censorship-list-item {
+  padding: 5px 7px;
+  background: rgba(11, 18, 32, 0.55);
+  border-radius: 5px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.censorship-list-item button {
+  flex: none;
+}
+
+.censorship-status-error {
+  color: #ffaaa5;
 }
 
 .settings-panel h2,

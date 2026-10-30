@@ -32,6 +32,14 @@ Le bouton **Bloquer** crée une règle Chrome persistante pour le domaine choisi
 
 Après une mise à jour de l'extension, utiliser le bouton **Actualiser** sur `chrome://extensions` afin que Chrome prenne en compte les nouvelles permissions.
 
+## Censure des sites et mots-clés
+
+L'onglet **Censure** du popup regroupe la liste des sites censurés et les réglages des mots-clés. Bloquer un domaine demande une confirmation ; la règle couvre le domaine racine et ses sous-domaines, redirige une navigation principale vers un avertissement local et bloque les autres requêtes vers ce domaine. Les pages déjà ouvertes doivent être rechargées pour appliquer la règle. Le bouton de déblocage retire le domaine de cette liste.
+
+La liste personnelle accepte jusqu'à 500 mots ou expressions, un par ligne (100 caractères maximum par entrée). L'extension recherche ces termes dans l'adresse de la page ainsi que dans les nœuds texte du DOM, y compris les éléments masqués et le contenu ajouté dynamiquement. Le code des scripts et styles n'est pas analysé. Une correspondance floute la page et affiche le terme trouvé ; **Révéler la page** ignore la détection jusqu'au prochain chargement, tandis que **Bloquer ce site** demande une confirmation distincte avant d'ajouter le domaine entier à la liste.
+
+Une liste distante est facultative et désactivée par défaut. L'utilisateur choisit son URL HTTP(S), enregistre la source, l'active puis télécharge explicitement un fichier texte contenant un terme par ligne ; les lignes commençant par `#` sont ignorées. La réponse est limitée à 1 Mio et à 500 termes. La copie téléchargée est conservée dans le stockage local de l'extension jusqu'au prochain téléchargement ou changement de source. Le serveur choisi reçoit une requête de téléchargement, mais aucune URL de page visitée ne lui est envoyée. Une erreur de téléchargement est affichée dans l'onglet **Censure**. EasyList reste dédiée aux filtres réseau publicitaires et n'est pas utilisée comme liste de mots-clés.
+
 ## Évaluation avec EasyList
 
 Dans l'onglet **Ressources**, **Vérifier les domaines** compare aussi localement les ressources détectées aux filtres réseau pris en charge de la liste officielle EasyList. La liste est récupérée à la demande puis gardée 12 heures dans le stockage local de l'extension; si le téléchargement échoue, la dernière copie disponible est utilisée. Les URL de la page ne sont pas envoyées à EasyList. Cette évaluation n'ajoute ni ne retire aucune règle DNR et ne bloque aucune requête.

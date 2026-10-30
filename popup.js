@@ -401,7 +401,11 @@ function activateTab(tabButton) {
   }
 
   const isSettingsTab = tabButton.id === "settings-tab";
-  headerAction.hidden = isSettingsTab;
+  const isCensorshipTab = tabButton.id === "censorship-tab";
+  if (isCensorshipTab) {
+    document.dispatchEvent(new Event("censorship-tab-activated"));
+  }
+  headerAction.hidden = isSettingsTab || isCensorshipTab;
   domainSettingsAction.hidden = !isSettingsTab;
   headerAction.textContent =
     tabButton.id === "elements-tab" || tabButton.id === "modified-tab"

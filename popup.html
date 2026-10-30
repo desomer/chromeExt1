@@ -72,6 +72,17 @@
         Modifiés
       </button>
       <button
+        id="censorship-tab"
+        class="tab-button"
+        type="button"
+        role="tab"
+        aria-selected="false"
+        aria-controls="censorship-panel"
+        tabindex="-1"
+      >
+        Censure
+      </button>
+      <button
         id="settings-tab"
         class="tab-button"
         type="button"
@@ -170,6 +181,72 @@
           </div>
 
           <div id="results" class="results"></div>
+        </section>
+      </section>
+
+      <section
+        id="censorship-panel"
+        class="tab-panel censorship-panel"
+        role="tabpanel"
+        aria-labelledby="censorship-tab"
+        hidden
+      >
+        <h2>Configuration de la censure</h2>
+        <p class="blocking-note">
+          Les mots-clés sont recherchés dans l’adresse et tout le texte du DOM, y compris les éléments masqués. Une correspondance floute la page ; le blocage du domaine demande toujours une confirmation séparée.
+        </p>
+
+        <section class="censorship-section" aria-labelledby="censored-site-title">
+          <h3 id="censored-site-title">Sites censurés</h3>
+          <p id="censorship-current-site" class="blocking-note">Site courant : —</p>
+          <button id="censor-current-site" class="refresh-button" type="button" disabled>
+            Bloquer ce domaine et ses sous-domaines
+          </button>
+          <button id="reload-censorship-page" class="refresh-button" type="button" hidden>
+            Recharger la page pour appliquer le blocage
+          </button>
+          <ul id="censored-sites-list" class="censorship-list"></ul>
+        </section>
+
+        <section class="censorship-section" aria-labelledby="keyword-title">
+          <h3 id="keyword-title">Mots-clés personnels</h3>
+          <label class="censorship-field">
+            <span>Un mot ou une expression par ligne</span>
+            <textarea id="censorship-keywords" rows="5" spellcheck="false"></textarea>
+          </label>
+          <p class="blocking-note">
+            La page est floutée dès qu’un terme est trouvé. Vous pouvez la révéler ou confirmer le blocage du domaine entier.
+          </p>
+          <button id="save-censorship-keywords" class="refresh-button" type="button">
+            Enregistrer les mots-clés
+          </button>
+        </section>
+
+        <section class="censorship-section" aria-labelledby="remote-keyword-title">
+          <h3 id="remote-keyword-title">Liste distante facultative</h3>
+          <label class="tab-confirmation-setting">
+            <span>
+              <strong>Activer une liste distante</strong>
+              <small>La source choisie sera téléchargée par l’extension</small>
+            </span>
+            <input id="remote-keywords-enabled" type="checkbox" role="switch" />
+          </label>
+          <label class="censorship-field">
+            <span>URL de la liste (un terme par ligne)</span>
+            <input id="remote-keywords-url" type="url" autocomplete="off" placeholder="https://example.com/keywords.txt" />
+          </label>
+          <p class="blocking-note">
+            Le serveur reçoit une requête de téléchargement, mais aucune adresse de page visitée. Aucune source distante n’est activée par défaut.
+          </p>
+          <div class="censorship-actions">
+            <button id="save-remote-keywords" class="refresh-button" type="button">
+              Enregistrer la source
+            </button>
+            <button id="refresh-remote-keywords" class="refresh-button" type="button" disabled>
+              Télécharger la liste
+            </button>
+          </div>
+          <p id="censorship-status" class="blocking-note" aria-live="polite"></p>
         </section>
       </section>
 
@@ -441,5 +518,6 @@
     <script src="popup-resources.js"></script>
     <script src="popup-elements.js"></script>
     <script src="popup.js"></script>
+    <script src="censorship.js"></script>
   </body>
 </html>

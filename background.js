@@ -1102,7 +1102,262 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
+const CENSORED_SITE_BLOCKED_TYPES = [
+  "sub_frame",
+  "stylesheet",
+  "script",
+  "image",
+  "font",
+  "object",
+  "xmlhttprequest",
+  "ping",
+  "csp_report",
+  "media",
+  "websocket",
+  "webtransport",
+  "webbundle",
+  "other",
+];
+const CENSORED_SITE_WARNING_PATH = "/site-blocked.html";
+let censoredSiteUpdateQueue = Promise.resolve();
+
+function normalizeCensoredHostname(value) {
+  const input = String(value ?? "").trim();
+  if (!input || input.length > 253 || /[/:?#@\s]/.test(input)) {
+    throw new Error("invalid hostname");
+  }
+
+  const parsedUrl = new URL(`https://${input}`);
+  const hostname = parsedUrl.hostname.toLowerCase().replace(/\.$/, "");
+  if (
+    !hostname ||
+    parsedUrl.pathname !== "/" ||
+    parsedUrl.search ||
+    parsedUrl.hash ||
+    hostname.includes(":")
+  ) {
+    throw new Error("invalid hostname");
+  }
+  return getRootDomain(hostname);
+}
+
+function isCensorshipRequestAllowed(sender) {
+  if (sender.id !== chrome.runtime.id) return false;
+  if (sender.url?.startsWith(chrome.runtime.getURL(""))) return true;
+  return isWebUrl(sender.url) && (sender.frameId ?? 0) === 0;
+}
+
+function findCensoredSiteRuleIds(rootDomain, dynamicRules) {
+  const urlFilter = `||${rootDomain}^`;
+  return dynamicRules
+    .filter((rule) => {
+      if (rule.priority !== 3 || rule.condition.urlFilter !== urlFilter) return false;
+      if (
+        rule.action.type === "redirect" &&
+        rule.action.redirect?.extensionPath === CENSORED_SITE_WARNING_PATH
+      ) {
+        return rule.condition.resourceTypes?.length === 1 &&
+          rule.condition.resourceTypes[0] === "main_frame";
+      }
+      return (
+        rule.action.type === "block" &&
+        rule.condition.resourceTypes?.length === CENSORED_SITE_BLOCKED_TYPES.length &&
+        CENSORED_SITE_BLOCKED_TYPES.every((type) =>
+          rule.condition.resourceTypes.includes(type)
+        )
+      );
+    })
+    .map(({ id }) => id);
+}
+
+async function setCensoredSite(hostname, shouldBlock) {
+  const rootDomain = normalizeCensoredHostname(hostname);
+  const [
+    {
+      censoredSites: savedCensoredSites = [],
+      censoredSiteRuleIds: savedCensoredSiteRuleIds = {},
+    },
+    dynamicRules,
+  ] = await Promise.all([
+    chrome.storage.local.get({
+      censoredSites: [],
+      censoredSiteRuleIds: {},
+    }),
+    chrome.declarativeNetRequest.getDynamicRules(),
+  ]);
+  const censoredSites = Array.isArray(savedCensoredSites) ? savedCensoredSites : [];
+  const censoredSiteRuleIds =
+    savedCensoredSiteRuleIds &&
+    typeof savedCensoredSiteRuleIds === "object" &&
+    !Array.isArray(savedCensoredSiteRuleIds)
+      ? savedCensoredSiteRuleIds
+      : {};
+  const ruleIds = [...new Set([
+    ...(Array.isArray(censoredSiteRuleIds[rootDomain])
+      ? censoredSiteRuleIds[rootDomain]
+      : []),
+    ...findCensoredSiteRuleIds(rootDomain, dynamicRules),
+  ])];
+  const existingRuleIds = new Set(dynamicRules.map(({ id }) => id));
+
+  if (!shouldBlock) {
+    const removeRuleIds = ruleIds.filter((id) => existingRuleIds.has(id));
+    const rulesToRestore = dynamicRules.filter(({ id }) =>
+      removeRuleIds.includes(id)
+    );
+    if (removeRuleIds.length) {
+      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds });
+    }
+    censoredSiteRuleIds[rootDomain] = [];
+    try {
+      await chrome.storage.local.set({
+        censoredSites: censoredSites.filter((domain) => domain !== rootDomain),
+        censoredSiteRuleIds,
+      });
+    } catch (error) {
+      try {
+        if (rulesToRestore.length) {
+          await chrome.declarativeNetRequest.updateDynamicRules({
+            addRules: rulesToRestore,
+          });
+        }
+      } catch (rollbackError) {
+        throw new Error(
+          `Could not save the unblocked site and could not restore its DNR rules: ${error.message}; ${rollbackError.message}`
+        );
+      }
+      throw error;
+    }
+    return { hostname: rootDomain, blocked: false };
+  }
+
+  const storedSites = [...new Set(
+    censoredSites
+      .filter((domain) => typeof domain === "string")
+      .map((domain) => {
+        try {
+          return normalizeCensoredHostname(domain);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+  )];
+  if (
+    storedSites.includes(rootDomain) &&
+    ruleIds.length === 2 &&
+    ruleIds.every((id) => existingRuleIds.has(id))
+  ) {
+    return { hostname: rootDomain, blocked: true, alreadyBlocked: true };
+  }
+
+  const staleRuleIds = ruleIds.filter((id) => existingRuleIds.has(id));
+  const staleRules = dynamicRules.filter(({ id }) => staleRuleIds.includes(id));
+  const activeRules = dynamicRules.filter(({ id }) => !staleRuleIds.includes(id));
+  const firstRuleId = Math.max(0, ...activeRules.map(({ id }) => id)) + 1;
+  const newRuleIds = [firstRuleId, firstRuleId + 1];
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: staleRuleIds,
+    addRules: [
+      {
+        id: firstRuleId,
+        priority: 3,
+        action: {
+          type: "redirect",
+          redirect: { extensionPath: CENSORED_SITE_WARNING_PATH },
+        },
+        condition: {
+          urlFilter: `||${rootDomain}^`,
+          resourceTypes: ["main_frame"],
+        },
+      },
+      {
+        id: firstRuleId + 1,
+        priority: 3,
+        action: { type: "block" },
+        condition: {
+          urlFilter: `||${rootDomain}^`,
+          resourceTypes: CENSORED_SITE_BLOCKED_TYPES,
+        },
+      },
+    ],
+  });
+
+  storedSites.push(rootDomain);
+  censoredSiteRuleIds[rootDomain] = [firstRuleId, firstRuleId + 1];
+  try {
+    await chrome.storage.local.set({
+      censoredSites: [...new Set(storedSites)],
+      censoredSiteRuleIds,
+    });
+  } catch (error) {
+    try {
+      await chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: newRuleIds,
+        addRules: staleRules,
+      });
+    } catch (rollbackError) {
+      throw new Error(
+        `Could not save the blocked site and could not restore its DNR rules: ${error.message}; ${rollbackError.message}`
+      );
+    }
+    throw error;
+  }
+  return { hostname: rootDomain, blocked: true, alreadyBlocked: false };
+}
+
+function queueCensoredSiteUpdate(hostname, shouldBlock) {
+  const operation = censoredSiteUpdateQueue.then(() =>
+    setCensoredSite(hostname, shouldBlock)
+  );
+  censoredSiteUpdateQueue = operation.catch(() => {});
+  return operation;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (
+    ["set-censored-site", "get-censored-sites", "reload-censored-tab"].includes(message.action) &&
+    !isCensorshipRequestAllowed(sender)
+  ) {
+    sendResponse({ ok: false, reason: "unauthorized censorship request" });
+    return;
+  }
+
+  if (message.action === "set-censored-site") {
+    queueCensoredSiteUpdate(message.hostname, message.blocked === true)
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => {
+        console.error("[Resource Origins] could not update censored sites", error);
+        sendResponse({ ok: false, reason: error?.message ?? String(error) });
+      });
+    return true;
+  }
+
+  if (message.action === "get-censored-sites") {
+    chrome.storage.local
+      .get({ censoredSites: [] })
+      .then(({ censoredSites }) => sendResponse({ ok: true, censoredSites }))
+      .catch((error) => {
+        console.error("[Resource Origins] could not load censored sites", error);
+        sendResponse({ ok: false, reason: error?.message ?? String(error) });
+      });
+    return true;
+  }
+
+  if (message.action === "reload-censored-tab") {
+    if (!Number.isInteger(sender.tab?.id) || (sender.frameId ?? 0) !== 0) {
+      sendResponse({ ok: false, reason: "request must come from a tab's top frame" });
+      return;
+    }
+    chrome.tabs.reload(sender.tab.id)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => {
+        console.error("[Resource Origins] could not reload censored tab", error);
+        sendResponse({ ok: false, reason: error?.message ?? String(error) });
+      });
+    return true;
+  }
+
   if (message.action === "block-risk-domain") {
     if (!Number.isInteger(sender.tab?.id) || (sender.frameId ?? 0) !== 0) {
       sendResponse({ ok: false, reason: "request must come from a tab's top frame" });

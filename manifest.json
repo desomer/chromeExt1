@@ -49,6 +49,11 @@
       "matches": ["http://*/*", "https://*/*"],
       "js": ["confirm-downloads.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["censorship-content.js"],
+      "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
@@ -62,7 +67,10 @@
         "tab-prompt.css",
         "tab-prompt.js",
         "download-prompt.html",
-        "download-prompt.js"
+        "download-prompt.js",
+        "site-blocked.html",
+        "site-blocked.css",
+        "site-blocked.js"
       ],
       "matches": ["http://*/*", "https://*/*"]
     }
